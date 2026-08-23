@@ -9,7 +9,7 @@ revision: 3
 document_status: "ACTIVE"
 inherits_from: ["FRAMEWORK-001"]
 created_at: "2026-08-23T17:26:38+07:00"
-updated_at: "2026-08-23T23:10:16+07:00"
+updated_at: "2026-08-23T23:14:56+07:00"
 created_by: "ACTOR-002"
 created_by_instance: "INST-001"
 epistemic_status: "VERIFIED"
@@ -154,4 +154,14 @@ project_source_schema_version: "1.0.0"
 - **Supports:** DRIFT-001; REQ-002; REQ-006; ACT-LNW-002
 - **Epistemic Status:** VERIFIED
 
+## EVD-014 — Legacy-WIP classification persistence checkpoint
+- **Evidence Type:** PROJECT_SOURCE_GIT_SCOPE_AND_POSTFLIGHT_VERIFICATION
+- **Captured At:** 2026-08-23T23:14:56+07:00
+- **Captured By Actor / Instance:** ACTOR-002 / INST-001
+- **Source Reference:** candidate validation; base-hash check; promoted-state validation; git diff --cached --check -- Project-Source; path-scoped commit; git show --name-only 4afeadcbcd2258c73751596a342da487992e0574; post-commit git status.
+- **Artifact Path:** Project-Source/
+- **Artifact Hash:** classification content commit `4afeadcbcd2258c73751596a342da487992e0574`
+- **Observed Result:** Nine active classification revisions promoted; nine prior active revisions archived; commit scope contains only 18 Project-Source paths (9 active revisions plus 9 archive-preserving renames); original raw 16-path implementation status remains outside the commit; ISS-002 is CLOSED; DRIFT-001 remains OPEN / BASE_STALE.
+- **Supports:** AUTH-003; CHG-006; ISS-002; DRIFT-001; REQ-002; REQ-004; ACT-LNW-002
+- **Epistemic Status:** VERIFIED
 Never store actual secrets as evidence.

@@ -9,7 +9,7 @@ revision: 3
 document_status: "ACTIVE"
 inherits_from: ["FRAMEWORK-001"]
 created_at: "2026-08-23T17:26:38+07:00"
-updated_at: "2026-08-23T23:10:16+07:00"
+updated_at: "2026-08-23T23:14:56+07:00"
 created_by: "ACTOR-002"
 created_by_instance: "INST-001"
 epistemic_status: "USER_CONFIRMED"
@@ -53,7 +53,8 @@ project_source_schema_version: "1.0.0"
 - **Risk Ceiling:** R1 bounded/reversible governance documentation mutation and path-scoped local Git commit.
 - **Start:** 2026-08-23T23:10:16+07:00
 - **Expiry / Termination:** Classification normalization completion checkpoint or explicit revocation.
-- **Status:** ACTIVE
+- **Status:** TERMINATED — classification normalization scope completed; no implementation or continuing mutation authority is implied.
 - **Approval Evidence:** EVD-011
+- **Completion Evidence:** EVD-014
 
 No active `DEL-*` delegation exists.

@@ -9,7 +9,7 @@ revision: 3
 document_status: "ACTIVE"
 inherits_from: ["FRAMEWORK-001"]
 created_at: "2026-08-23T17:26:38+07:00"
-updated_at: "2026-08-23T23:10:16+07:00"
+updated_at: "2026-08-23T23:14:56+07:00"
 created_by: "ACTOR-002"
 created_by_instance: "INST-001"
 epistemic_status: "VERIFIED"
@@ -57,7 +57,7 @@ None after successful promotion. During promotion, `drafts/` is transient formal
 - `DRIFT-001` OPEN / `STALE_NON_SEMANTIC` / `BASE_STALE` pending governed base update and affected verification.
 
 ## Registered Evidence
-`EVD-001` through `EVD-013` before postflight closure; `EVD-012` is the 16-path WIP classification and `EVD-013` is the remote base-divergence classification.
+`EVD-001` through `EVD-014`; `EVD-012` is the 16-path WIP classification, `EVD-013` is the remote base-divergence classification, and `EVD-014` is the bounded persistence/postflight checkpoint.
 
 ## Pinned Framework / Schema
 - Framework: `1.3.0`
