@@ -55,3 +55,30 @@ export function syncMachineRoots(
 ): Promise<Workspace | null> {
   return unrestricted ? syncAllDriveRoots(workspaceService) : syncPreferredMachineRoot(workspaceService, preferredPath);
 }
+
+/**
+ * Task Extend-V1.0.0 (mount roots): register extra capability roots
+ * (LNWJUD_CAPABILITY_EXTRA_ROOTS, e.g. NAS mounts M:/Y:/Z:) as workspaces so
+ * restricted mode can resolve absolute paths against them. Restricted mode
+ * keeps its path control — this only widens the registered boundary.
+ */
+export async function syncExtraCapabilityRoots(
+  workspaceService: WorkspaceService,
+  extraRoots: readonly string[],
+): Promise<void> {
+  for (const raw of extraRoots) {
+    const root = normalizeWorkspaceRoot(raw);
+    if (!existsSync(root)) continue;
+    const existing = await workspaceService.list();
+    // A drive letter may already be registered under its canonical UNC real root
+    // (e.g. M:\ -> \\MCT-MAC5\mac5\). Match on both forms before inserting.
+    const target = root.toLowerCase();
+    const alreadyRegistered = existing.some((entry) =>
+      normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === target
+      || normalizeWorkspaceRoot(entry.rootPath).toLowerCase() === target,
+    );
+    if (alreadyRegistered) continue;
+    const label = /^[A-Za-z]:\\?$/.test(root) ? `Local Disk ${root[0]}:` : `Mount ${root}`;
+    await workspaceService.add(label, root);
+  }
+}

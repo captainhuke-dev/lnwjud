@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { syncMachineRoots } from '@lnwjud/application';
+import { syncExtraCapabilityRoots, syncMachineRoots } from '@lnwjud/application';
 import { startMcpStdio } from '@lnwjud/mcp-server';
 import {
   STDIO_ALLOWED_ROOTS_SETTING_KEY,
@@ -9,6 +9,7 @@ import {
   UNRESTRICTED_SETTING_KEY,
   isUnrestricted,
   parseAllowedRoots,
+  parsePathList,
   parseBooleanSetting,
   parseStdioPermissionProfile,
   resolveLnwjudDataPath,
@@ -119,10 +120,22 @@ async function main(): Promise<void> {
     workspace = selected;
   } else {
     const restrictedRoot = machineRootPath(requestedPath);
-    process.env.LNWJUD_CAPABILITY_ROOTS = process.env.LNWJUD_CAPABILITY_ROOTS?.trim()
-      || restrictedRoot.replace(/\\/g, '/');
+    // Task Extend-V1.0.0 (mount roots): merge LNWJUD_CAPABILITY_EXTRA_ROOTS into the
+    // capability-roots env so restricted mode can reach extra roots (e.g. NAS mounts
+    // M:/Y:/Z:) without enabling unrestricted mode. The runtime also reads the
+    // EXTRA variable directly; this keeps LNWJUD_CAPABILITY_ROOTS authoritative.
+    const extraRoots = process.env.LNWJUD_CAPABILITY_EXTRA_ROOTS?.trim() ?? '';
+    process.env.LNWJUD_CAPABILITY_ROOTS = [process.env.LNWJUD_CAPABILITY_ROOTS?.trim(), extraRoots]
+      .filter((entry) => entry !== undefined && entry.length > 0)
+      .join(';') || restrictedRoot.replace(/\\/g, '/');
     const machineRoot = await syncMachineRoots(workspaceService, unrestricted, requestedPath);
     if (machineRoot === null) throw new Error('Could not register machine root');
+    // Task Extend-V1.0.0 (mount roots): register NAS/network mounts as workspaces so
+    // absolute paths under them resolve in restricted mode.
+    await syncExtraCapabilityRoots(
+      workspaceService,
+      parsePathList(process.env.LNWJUD_CAPABILITY_EXTRA_ROOTS),
+    );
 
     const requestedNorm = normalizeWorkspaceRoot(requestedPath).toLowerCase();
     const workspaces = await workspaceService.list();
