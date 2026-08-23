@@ -54,12 +54,56 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       annotations: tool.annotations,
     }, async (input: unknown, context): Promise<CallToolResult> => {
       const dispatchContext = context as ProgressNotifyContext & RunBudgetContext;
-      runBudgetGuard.begin(dispatchContext);
-      const result = await withProgressHeartbeat(dispatchContext, tool.name, async () => (
-        registry.invoke(tool.name, input, readTraceContext(context)) as unknown as Promise<CallToolResult>
-      ));
-      return runBudgetGuard.finish(dispatchContext, result);
+      // Task Extend-V1.0.0 #2.2 (graceful degradation): a single failing tool call must
+      // never escape as a transport-level fault. The stdio tunnel-client treats an
+      // unexpected child exit as fatal ("stdio MCP command failed; requesting
+      // tunnel-client shutdown"), which took the whole tunnel down. Convert every
+      // unhandled failure into a normal isError result instead.
+      try {
+        runBudgetGuard.begin(dispatchContext);
+        const result = await withProgressHeartbeat(dispatchContext, tool.name, async () => (
+          registry.invoke(tool.name, input, readTraceContext(context)) as unknown as Promise<CallToolResult>
+        ));
+        // Task Extend-V1.0.0 #2.1 (payload guard): the control plane rejects tunnel
+        // request/response payloads above 10 MiB with a hard 413
+        // (request_body_too_large). Keep serialized responses comfortably below that
+        // ceiling so oversized results degrade into an explicit error message instead
+        // of killing the stdio transport.
+        return enforceResponsePayloadLimit(runBudgetGuard.finish(dispatchContext, result));
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Operation failed';
+        return {
+          isError: true,
+          content: [{ type: 'text', text: `INTERNAL_ERROR: ${message}` }],
+          structuredContent: { error: { code: 'INTERNAL_ERROR', message, recoverable: true } },
+        };
+      }
     });
   }
   return server;
+}
+
+/** Control-plane hard limit is 10 MiB (10485760); stay safely below it. */
+const MAX_TUNNEL_RESPONSE_BYTES = 8 * 1024 * 1024;
+
+export function enforceResponsePayloadLimit(result: CallToolResult): CallToolResult {
+  let serializedSize = 0;
+  for (const part of result.content ?? []) {
+    if (part.type === 'text') serializedSize += Buffer.byteLength(part.text, 'utf8');
+    else if (part.type === 'image') serializedSize += Buffer.byteLength(part.data, 'utf8');
+  }
+  if (result.structuredContent !== undefined) {
+    serializedSize += Buffer.byteLength(safeSerialize(result.structuredContent), 'utf8');
+  }
+  if (serializedSize <= MAX_TUNNEL_RESPONSE_BYTES) return result;
+  const message = `RESPONSE_TOO_LARGE: tool response is ${serializedSize} bytes which exceeds the ${MAX_TUNNEL_RESPONSE_BYTES}-byte tunnel payload limit; narrow the request (pagination, filters, smaller limit) instead of requesting the full result`;
+  return {
+    isError: true,
+    content: [{ type: 'text', text: message }],
+    structuredContent: { error: { code: 'RESPONSE_TOO_LARGE', message, recoverable: true } },
+  };
+}
+
+function safeSerialize(value: unknown): string {
+  try { return JSON.stringify(value) ?? ''; } catch { return ''; }
 }
