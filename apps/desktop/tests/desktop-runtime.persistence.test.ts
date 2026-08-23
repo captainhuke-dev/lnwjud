@@ -143,6 +143,8 @@ describe('DesktopRuntime persistence', () => {
         mcpCallTimeoutMs: 120_000,
         mcpIdleTimeoutMs: 10 * 60_000,
         processTimeoutMs: 90 * 60_000,
+        mcpPollWaitSeconds: 25,
+        shellSynchronousWaitSeconds: 45,
         capabilityRoots: ['D:\\Projects', 'E:\\Work'],
         pdfProviderPath: 'C:\\Tools\\pdftotext.exe',
         lspCommands: { typescript: '["typescript-language-server","--stdio"]', python: '["pyright-langserver","--stdio"]' },
@@ -195,6 +197,8 @@ describe('DesktopRuntime persistence', () => {
           mcpCallTimeoutMs: 120_000,
           mcpIdleTimeoutMs: 10 * 60_000,
           processTimeoutMs: 90 * 60_000,
+          mcpPollWaitSeconds: 25,
+          shellSynchronousWaitSeconds: 45,
           capabilityRoots: ['D:\\Projects', 'E:\\Work'],
           pdfProviderPath: 'C:\\Tools\\pdftotext.exe',
           lspCommands: { typescript: '["typescript-language-server","--stdio"]', python: '["pyright-langserver","--stdio"]' },
@@ -221,6 +225,25 @@ describe('DesktopRuntime persistence', () => {
       await restarted.close();
     }
   }, 30_000);
+  it('applies MCP poll and foreground wait settings live without requiring a runtime restart', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-live-waits-'));
+    temporaryRoots.push(rawDataRoot);
+    const dataRoot = await realpath(rawDataRoot);
+    const runtime = createDesktopRuntime(dataRoot);
+    try {
+      const initial = runtime.getUserSettings();
+      expect(initial).toMatchObject({ mcpPollWaitSeconds: 5, shellSynchronousWaitSeconds: 60 });
+      const next = { ...initial, mcpPollWaitSeconds: 20, shellSynchronousWaitSeconds: 40 };
+      await expect(runtime.services.setUserSettings({ settings: next })).resolves.toMatchObject({
+        restartRequired: false,
+        settings: { mcpPollWaitSeconds: 20, shellSynchronousWaitSeconds: 40 },
+      });
+      expect(runtime.getUserSettings()).toMatchObject({ mcpPollWaitSeconds: 20, shellSynchronousWaitSeconds: 40 });
+    } finally {
+      await runtime.close();
+    }
+  }, 30_000);
+
   it('serves the local capability health tool through the desktop MCP listener', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-data-'));
     const rawWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-workspace-'));
@@ -240,17 +263,27 @@ describe('DesktopRuntime persistence', () => {
         const response = await client.callTool({ name: 'health', arguments: { operation: 'check_tool', tool: 'shell' } });
         expect(response.isError).not.toBe(true);
         expect(response.structuredContent).toMatchObject({ tool: 'shell', available: true });
+        const shellStartedAt = Date.now();
         const shellResponse = await client.callTool({
           name: 'shell',
           arguments: {
             executable: process.execPath,
-            arguments: ['-e', "process.stdout.write('local-shell')"],
+            arguments: ['-e', "setTimeout(() => process.stdout.write('local-shell'), 5500)"],
             cwd: workspaceRoot,
             execution: 'foreground',
           },
         });
+        expect(Date.now() - shellStartedAt).toBeLessThan(4_000);
         expect(shellResponse.isError).not.toBe(true);
-        expect(shellResponse.structuredContent).toMatchObject({ state: 'completed', exit_code: 0, stdout: 'local-shell' });
+        expect(shellResponse.structuredContent).toMatchObject({ state: 'running', task_id: expect.any(String) });
+        const shellTaskId = (shellResponse.structuredContent as { task_id: string }).task_id;
+        let shellResult = shellResponse;
+        for (let attempt = 0; attempt < 140 && shellResult.structuredContent?.state === 'running'; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          shellResult = await client.callTool({ name: 'shell', arguments: { operation: 'result', task_id: shellTaskId } });
+        }
+        expect(shellResult.isError).not.toBe(true);
+        expect(shellResult.structuredContent).toMatchObject({ state: 'completed', exit_code: 0, stdout: 'local-shell' });
         if (process.platform === 'win32') {
           const windowHealth = await client.callTool({ name: 'health', arguments: { operation: 'check_tool', tool: 'window' } });
           expect(windowHealth.isError).not.toBe(true);
