@@ -9,7 +9,7 @@ revision: 1
 document_status: "ACTIVE"
 inherits_from: ["FRAMEWORK-001"]
 created_at: "2026-08-23T17:26:38+07:00"
-updated_at: "2026-08-23T17:26:38+07:00"
+updated_at: "2026-08-23T17:36:43+07:00"
 created_by: "ACTOR-002"
 created_by_instance: "INST-001"
 epistemic_status: "VERIFIED"
@@ -30,7 +30,7 @@ project_source_schema_version: "1.0.0"
 - **Contingency:** Stop before commit or revert only the bootstrap commit through governed Git recovery if contamination is detected.
 - **Owner:** ACTOR-002 for bootstrap execution; ACTOR-001 accountable.
 - **Review Trigger:** Before bootstrap commit and after commit.
-- **Status:** MITIGATING
+- **Status:** CLOSED
 - **Related:** REQ-004; ACT-001; EVD-003; GATE-001
 
 ## DEP-001 — Canonical ProjectFramework source
@@ -49,13 +49,13 @@ project_source_schema_version: "1.0.0"
 - **Affected Scope:** `Project-Source/` initial creation.
 - **Entry Criteria:** User approval; canonical Framework source resolved; root `FRAMEWORK-001` created first.
 - **Pass Criteria:** Mandatory + approved conditional documents present; slots `18–19` absent; coherent identity/version/inheritance; no material unresolved placeholders in active Project facts; secret-value checks pass; Git diff/commit path is only `Project-Source/`; pre-existing WIP remains; completion commit observed.
-- **Required Evidence:** EVD-001 through EVD-004 plus completion verification/commit evidence.
+- **Required Evidence:** EVD-001 through EVD-005.
 - **Review Owner:** ACTOR-002 / INST-001
 - **Required Authority:** AUTH-001
-- **Status:** IN_REVIEW
-- **Findings:** PENDING final verification.
+- **Status:** PASS
+- **Findings:** Structural/integrity checks passed; secret scan clear; path-scoped content commit contains only `Project-Source/`; pre-existing implementation WIP remained outside the commit.
 - **Exception / Waiver:** NONE
-- **Next Action:** Run structural + Git scope verification, commit bootstrap, then close gate/action state.
-- **Reviewed At:** PENDING
+- **Next Action:** NONE for bootstrap; future implementation begins under a separate governed action.
+- **Reviewed At:** 2026-08-23T17:36:43+07:00
 
 No `ASM-*`, `MS-*`, `OUT-*`, or `CR-*` records are materialized at bootstrap because no verified current object in those families is required yet.

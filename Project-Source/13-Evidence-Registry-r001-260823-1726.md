@@ -9,7 +9,7 @@ revision: 1
 document_status: "ACTIVE"
 inherits_from: ["FRAMEWORK-001"]
 created_at: "2026-08-23T17:26:38+07:00"
-updated_at: "2026-08-23T17:26:38+07:00"
+updated_at: "2026-08-23T17:36:43+07:00"
 created_by: "ACTOR-002"
 created_by_instance: "INST-001"
 epistemic_status: "VERIFIED"
@@ -59,5 +59,15 @@ project_source_schema_version: "1.0.0"
 - **Artifact Hash:** NOT_APPLICABLE
 - **Supports:** DEC-001; DEC-002; AUTH-001; ACT-001
 - **Epistemic Status:** USER_CONFIRMED
+
+## EVD-005 — Framework bootstrap completion checkpoint
+- **Evidence Type:** STRUCTURAL_AND_GIT_SCOPE_VERIFICATION
+- **Captured At:** 2026-08-23T17:36:43+07:00
+- **Captured By Actor / Instance:** ACTOR-002 / INST-001
+- **Source Reference:** Project Source structural checks; `git diff --cached --check`; `git show ff13a92ce420b72799366b8043470feb96ad2c0b`
+- **Artifact Path:** `Project-Source/`
+- **Artifact Hash:** completion content commit `ff13a92ce420b72799366b8043470feb96ad2c0b`
+- **Supports:** ACT-001; GATE-001; REQ-001; REQ-004
+- **Epistemic Status:** VERIFIED
 
 Never store actual secrets as evidence.

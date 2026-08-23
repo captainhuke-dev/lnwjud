@@ -9,7 +9,7 @@ revision: 1
 document_status: "ACTIVE"
 inherits_from: ["FRAMEWORK-001"]
 created_at: "2026-08-23T17:26:38+07:00"
-updated_at: "2026-08-23T17:26:38+07:00"
+updated_at: "2026-08-23T17:36:43+07:00"
 created_by: "ACTOR-002"
 created_by_instance: "INST-001"
 epistemic_status: "USER_CONFIRMED"
@@ -28,7 +28,7 @@ project_source_schema_version: "1.0.0"
 - **Forbidden Actions / Effects:** Do not reset/clean/overwrite unrelated implementation WIP; do not push; do not change runtime/application behavior; do not create or store secret values; do not infer unresolved Drive/storage authority.
 - **Risk Ceiling:** R1 bounded/reversible governance documentation mutation.
 - **Start:** 2026-08-23T17:25:00+07:00
-- **Expiry / Termination:** Ends when initial bootstrap completion checkpoint is committed and reported; future Material work requires applicable current authority.
-- **Status:** ACTIVE until bootstrap closure.
+- **Expiry / Termination:** Initial bootstrap completion checkpoint.
+- **Status:** TERMINATED — approved bootstrap scope completed; no continuing mutation authority is implied.
 
 No active `DEL-*` delegation exists.

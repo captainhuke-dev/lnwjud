@@ -9,7 +9,7 @@ revision: 1
 document_status: "ACTIVE"
 inherits_from: ["FRAMEWORK-001"]
 created_at: "2026-08-23T17:26:38+07:00"
-updated_at: "2026-08-23T17:26:38+07:00"
+updated_at: "2026-08-23T17:36:43+07:00"
 created_by: "ACTOR-002"
 created_by_instance: "INST-001"
 epistemic_status: "VERIFIED"
@@ -49,7 +49,7 @@ Slots `18–19` are reserved and intentionally absent.
 None inside Project Source at bootstrap. Pre-existing implementation WIP remains outside this manifest and is tracked as `ISS-002` until normalized.
 
 ## Registered Evidence
-`EVD-001` through `EVD-004`; completion verification evidence will be appended before bootstrap closure.
+`EVD-001` through `EVD-005`; `EVD-005` records the bootstrap completion checkpoint.
 
 ## Pinned Framework / Schema
 - Framework: `1.3.0`
