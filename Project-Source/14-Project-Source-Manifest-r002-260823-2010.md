@@ -9,7 +9,7 @@ revision: 2
 document_status: "ACTIVE"
 inherits_from: ["FRAMEWORK-001"]
 created_at: "2026-08-23T17:26:38+07:00"
-updated_at: "2026-08-23T20:10:00+07:00"
+updated_at: "2026-08-23T20:18:00+07:00"
 created_by: "ACTOR-002"
 created_by_instance: "INST-001"
 epistemic_status: "VERIFIED"
@@ -52,7 +52,7 @@ None after successful promotion. During promotion, `drafts/` is transient formal
 `ACT-LNW-001` through `ACT-LNW-004` are current `PLANNED` actions; `ACT-001` remains `DONE`.
 
 ## Registered Evidence
-`EVD-001` through `EVD-008` before postflight; candidate verification/completion evidence is added at the logical checkpoint.
+`EVD-001` through `EVD-010`; `EVD-009` records structural/content verification and `EVD-010` records the path-scoped Git persistence checkpoint.
 
 ## Pinned Framework / Schema
 - Framework: `1.3.0`

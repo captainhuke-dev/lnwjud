@@ -9,7 +9,7 @@ revision: 2
 document_status: "ACTIVE"
 inherits_from: ["FRAMEWORK-001"]
 created_at: "2026-08-23T17:26:38+07:00"
-updated_at: "2026-08-23T20:10:00+07:00"
+updated_at: "2026-08-23T20:18:00+07:00"
 created_by: "ACTOR-002"
 created_by_instance: "INST-001"
 epistemic_status: "VERIFIED"
@@ -100,4 +100,25 @@ project_source_schema_version: "1.0.0"
 - **Supports:** REQ-002; REQ-004; ISS-002; AUTH-002
 - **Epistemic Status:** VERIFIED
 
+## EVD-009 — Task-portfolio candidate and promoted-state verification
+- **Evidence Type:** STRUCTURAL_CONTENT_AND_SECRET_PATTERN_VERIFICATION
+- **Captured At:** 2026-08-23T20:18:00+07:00
+- **Captured By Actor / Instance:** ACTOR-002 / INST-001
+- **Source Reference:** Candidate/promoted Project Source checks performed during this persistence flow.
+- **Artifact Path:** `Project-Source/`
+- **Artifact Hash:** NOT_APPLICABLE
+- **Observed Result:** 12 active `r002` files; 0 remaining `r002` drafts; 12 required prior revisions archived; 0 bad status/revision records; 0 reserved `18–19` files; 4 authoritative `ACT-LNW-*` definitions; 6 authoritative `REQ-005..010` definitions; 0 token-like secret-value pattern hits.
+- **Supports:** AUTH-002; CHG-003; ACT-LNW-001; ACT-LNW-002; ACT-LNW-003; ACT-LNW-004; REQ-005; REQ-006; REQ-007; REQ-008; REQ-009; REQ-010
+- **Epistemic Status:** VERIFIED
+
+## EVD-010 — Task-portfolio persistence Git checkpoint
+- **Evidence Type:** GIT_SCOPE_AND_PRESERVATION_VERIFICATION
+- **Captured At:** 2026-08-23T20:18:00+07:00
+- **Captured By Actor / Instance:** ACTOR-002 / INST-001
+- **Source Reference:** `git diff --cached --check -- Project-Source`; path-scoped commit; `git show --name-only ee1b03cf8ec278752b8e2bcc3e109d92979c98f9`; post-commit `git status`.
+- **Artifact Path:** `Project-Source/`
+- **Artifact Hash:** content checkpoint commit `ee1b03cf8ec278752b8e2bcc3e109d92979c98f9`
+- **Observed Result:** Commit contains only 24 `Project-Source/` paths (12 active r002 files plus 12 archive-preserving renames); unrelated pre-existing implementation WIP remains present as 16 changed paths outside Project Source.
+- **Supports:** AUTH-002; CHG-004; REQ-004; ACT-LNW-001; ACT-LNW-002; ACT-LNW-003; ACT-LNW-004
+- **Epistemic Status:** VERIFIED
 Never store actual secrets as evidence.
