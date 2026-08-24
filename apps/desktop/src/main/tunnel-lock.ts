@@ -93,6 +93,65 @@ export async function readTunnelLock(profileDirectory: string): Promise<TunnelLo
   return state.state === 'valid' ? state.owner : null;
 }
 
+export interface TunnelLockRecovery {
+  /** 'removed' — a dead/stale lock was quarantined and deleted. */
+  /** 'live-owner' — the recorded owner is alive and verified; nothing was touched. */
+  /** 'unverifiable' — the owner could not be probed AND no heartbeat exists to prove it dead. */
+  readonly outcome: 'missing' | 'removed' | 'live-owner' | 'unverifiable';
+  readonly owner: TunnelLockOwner | null;
+}
+
+/**
+ * Task Extent-V1.1.0 (recover CLI, Task 1.3): explicit escape hatch for an operator
+ * or agent to clear a stuck tunnel lock. Safety rules:
+ * - A live owner with matching processStartedAt is NEVER removed.
+ * - An unverifiable owner without any heartbeat (v1 record) is NEVER removed —
+ *   fail closed exactly like acquireTunnelLock.
+ * - Gone owners and stale-heartbeat owners are quarantined then deleted.
+ * Run via: lnwjud-mcp-stdio.cmd --recover-lock [--force]
+ */
+export async function recoverTunnelLock(
+  profileDirectory: string,
+  options?: {
+    readonly inspectProcess?: (pid: number) => Promise<ProcessProbeResult>;
+    /** Bypass the stale-heartbeat wait for v1 records when the operator confirms. */
+    readonly force?: boolean;
+  },
+): Promise<TunnelLockRecovery> {
+  const lockPath = tunnelLockPath(profileDirectory);
+  const inspectProcess = options?.inspectProcess ?? ((pid: number): Promise<ProcessProbeResult> => probeProcessStart(pid, {
+    timeoutMs: PROCESS_PROBE_TIMEOUT_MS,
+    attempts: 1,
+  }));
+  await mkdir(profileDirectory, { recursive: true });
+
+  return withTunnelLockCriticalSection(profileDirectory, async () => {
+    const existing = await readLockState(lockPath);
+    if (existing.state === 'missing') return { outcome: 'missing', owner: null };
+    if (existing.state === 'invalid') {
+      // Corrupt metadata cannot prove liveness; quarantine so the next start is clean.
+      const quarantinePath = `${lockPath}.invalid.${process.pid}.${Date.now()}`;
+      await rename(lockPath, quarantinePath).catch(() => undefined);
+      await rm(quarantinePath, { force: true }).catch(() => undefined);
+      return { outcome: 'removed', owner: null };
+    }
+
+    const owner = existing.owner;
+    const probe = await inspectProcess(owner.pid);
+    if (probe.state === 'live' && probe.processStartedAt === owner.processStartedAt) {
+      return { outcome: 'live-owner', owner };
+    }
+    if (probe.state === 'unverifiable' && !isHeartbeatStale(owner) && options?.force !== true) {
+      return { outcome: 'unverifiable', owner };
+    }
+    // Dead PID, identity mismatch, stale heartbeat, or forced override: remove.
+    const quarantinePath = `${lockPath}.recovered.${owner.pid}.${Date.now()}`;
+    await rename(lockPath, quarantinePath);
+    await rm(quarantinePath, { force: true }).catch(() => undefined);
+    return { outcome: 'removed', owner };
+  });
+}
+
 export function tunnelLockPath(profileDirectory: string): string {
   return path.join(profileDirectory, LOCK_FILE);
 }
