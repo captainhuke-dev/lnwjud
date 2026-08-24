@@ -2,10 +2,20 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { link, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { probeProcessStart, type ProcessProbeResult } from '@lnwjud/mcp-server';
+import { probeProcessStart, PROCESS_PROBE_TIMEOUT_MS, type ProcessProbeResult } from '@lnwjud/mcp-server';
 
 const LOCK_FILE = 'lnwjud.tunnel.lock';
-const LOCK_VERSION = 1;
+const LOCK_VERSION = 2;
+/** Locks written by the previous schema (version 1) carry no heartbeat field. */
+export const LOCK_VERSION_WITHOUT_HEARTBEAT = 1;
+/**
+ * Task Extent-V1.1.0 (heartbeat): a live owner refreshes lastHeartbeatAt on this
+ * interval; a lock whose heartbeat is older than the staleness threshold is
+ * reclaimable even when its PID cannot be probed (previously an unrecoverable
+ * 'liveness is unverifiable' state).
+ */
+export const HEARTBEAT_INTERVAL_MS = 30_000;
+export const HEARTBEAT_STALE_MS = 90_000;
 const MUTEX_WAIT_MS = 5_000;
 const ISO_UTC_MILLISECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
@@ -13,6 +23,8 @@ export interface TunnelLockOwner {
   readonly pid: number;
   readonly processStartedAt: string;
   readonly acquiredAt: string;
+  /** Present only on version-2 locks refreshed by a live owner. */
+  readonly lastHeartbeatAt?: string;
 }
 
 export interface TunnelLockHandle {
@@ -44,7 +56,10 @@ export interface TunnelLockOptions {
 export async function acquireTunnelLock(options: TunnelLockOptions): Promise<TunnelLockAcquisition | TunnelLockAlreadyOwned> {
   const lockPath = tunnelLockPath(options.profileDirectory);
   const owner = options.owner ?? await currentProcessOwner();
-  const inspectProcess = options.inspectProcess ?? probeProcessStart;
+  const inspectProcess = options.inspectProcess ?? ((pid: number): Promise<ProcessProbeResult> => probeProcessStart(pid, {
+    timeoutMs: PROCESS_PROBE_TIMEOUT_MS,
+    attempts: 1,
+  }));
   if (!isValidOwner(owner)) throw new Error('Tunnel lock owner metadata is invalid');
   await mkdir(options.profileDirectory, { recursive: true });
 
@@ -57,7 +72,13 @@ export async function acquireTunnelLock(options: TunnelLockOptions): Promise<Tun
     }
 
     const probe = await inspectProcess(existing.owner.pid);
-    if (probe.state === 'unverifiable') throw new Error(`Tunnel lock owner liveness is unverifiable: ${probe.reason}`);
+    // Task Extent-V1.1.0 (heartbeat): a stale heartbeat proves the recorded owner
+    // stopped refreshing, so the lock is reclaimable even when the process probe
+    // cannot verify liveness (previously a hard 'unverifiable' error that blocked
+    // every later start attempt until manual lock cleanup).
+    if (probe.state === 'unverifiable' && !isHeartbeatStale(existing.owner)) {
+      throw new Error(`Tunnel lock owner liveness is unverifiable: ${probe.reason}`);
+    }
     if (probe.state === 'live' && probe.processStartedAt === existing.owner.processStartedAt) {
       return { acquired: false, owner: existing.owner };
     }
@@ -176,9 +197,19 @@ function parseOwner(raw: string): TunnelLockOwner | null {
     const value: unknown = JSON.parse(raw);
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
-    if (record.version !== LOCK_VERSION || !Number.isInteger(record.pid) || typeof record.processStartedAt !== 'string' || typeof record.acquiredAt !== 'string') return null;
+    // Task Extent-V1.1.0 (heartbeat): accept both schema generations — version 1
+    // records carry no heartbeat and version 2 records must carry a valid one.
+    if (!Number.isInteger(record.pid) || typeof record.processStartedAt !== 'string' || typeof record.acquiredAt !== 'string') return null;
+    const heartbeat = record.lastHeartbeatAt;
+    if (record.version === LOCK_VERSION && (typeof heartbeat !== 'string' || !isUtcMillisecondTimestamp(heartbeat))) return null;
+    if (record.version !== LOCK_VERSION && record.version !== LOCK_VERSION_WITHOUT_HEARTBEAT) return null;
     if ((record.pid as number) <= 0 || (record.pid as number) > 2_147_483_647 || !isUtcMillisecondTimestamp(record.processStartedAt) || !isUtcMillisecondTimestamp(record.acquiredAt)) return null;
-    return { pid: record.pid as number, processStartedAt: record.processStartedAt, acquiredAt: record.acquiredAt };
+    return {
+      pid: record.pid as number,
+      processStartedAt: record.processStartedAt,
+      acquiredAt: record.acquiredAt,
+      ...(typeof heartbeat === 'string' ? { lastHeartbeatAt: heartbeat } : {}),
+    };
   } catch {
     return null;
   }
@@ -189,7 +220,8 @@ function isValidOwner(owner: TunnelLockOwner): boolean {
     && owner.pid > 0
     && owner.pid <= 2_147_483_647
     && isUtcMillisecondTimestamp(owner.processStartedAt)
-    && isUtcMillisecondTimestamp(owner.acquiredAt);
+    && isUtcMillisecondTimestamp(owner.acquiredAt)
+    && (owner.lastHeartbeatAt === undefined || isUtcMillisecondTimestamp(owner.lastHeartbeatAt));
 }
 
 function isUtcMillisecondTimestamp(value: string): boolean {
@@ -199,7 +231,56 @@ function isUtcMillisecondTimestamp(value: string): boolean {
 }
 
 function serializeOwner(owner: TunnelLockOwner): string {
-  return JSON.stringify({ version: LOCK_VERSION, pid: owner.pid, processStartedAt: owner.processStartedAt, acquiredAt: owner.acquiredAt });
+  return JSON.stringify({
+    version: LOCK_VERSION,
+    pid: owner.pid,
+    processStartedAt: owner.processStartedAt,
+    acquiredAt: owner.acquiredAt,
+    lastHeartbeatAt: owner.lastHeartbeatAt ?? nowIsoUtc(),
+  });
+}
+
+/** Task Extent-V1.1.0 (heartbeat): true when the recorded owner stopped refreshing. */
+export function isHeartbeatStale(owner: TunnelLockOwner, staleAfterMs = HEARTBEAT_STALE_MS, now = Date.now()): boolean {
+  if (owner.lastHeartbeatAt === undefined) return false;
+  const heartbeat = new Date(owner.lastHeartbeatAt).getTime();
+  if (Number.isNaN(heartbeat)) return false;
+  return now - heartbeat > staleAfterMs;
+}
+
+/**
+ * Task Extent-V1.1.0 (heartbeat): atomically refresh lastHeartbeatAt while still
+ * holding ownership. Returns false when the lock was lost or replaced — the
+ * caller must stop treating itself as the owner.
+ */
+export async function refreshTunnelLockHeartbeat(
+  profileDirectory: string,
+  owner: TunnelLockOwner,
+  options?: Pick<TunnelLockOptions, 'hooks'>,
+): Promise<boolean> {
+  const lockPath = tunnelLockPath(profileDirectory);
+  return withTunnelLockCriticalSection(profileDirectory, async () => {
+    const current = await readLockState(lockPath);
+    if (current.state !== 'valid' || !sameOwner(current.owner, owner)) return false;
+    const refreshed: TunnelLockOwner = { ...owner, lastHeartbeatAt: nowIsoUtc() };
+    const temporaryPath = await prepareOwnerRecord(lockPath, refreshed);
+    try {
+      await options?.hooks?.beforePublish?.(temporaryPath);
+      // Replace in place through rename so readers never see a missing file.
+      await rm(lockPath, { force: true });
+      await link(temporaryPath, lockPath);
+    } catch (error: unknown) {
+      await restoreQuarantinedRecord(lockPath, `${lockPath}.heartbeat.${Date.now()}`);
+      await rm(temporaryPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+    return true;
+  });
+}
+
+function nowIsoUtc(): string {
+  return new Date().toISOString().replace(/\.(\d{3})\d*Z$/, '.$1Z');
 }
 
 function sameOwner(left: TunnelLockOwner | null, right: TunnelLockOwner): boolean {
@@ -218,7 +299,7 @@ function isNotFound(error: unknown): boolean {
 }
 
 async function currentProcessOwner(): Promise<TunnelLockOwner> {
-  const probe = await probeProcessStart(process.pid);
+  const probe = await probeProcessStart(process.pid, { timeoutMs: PROCESS_PROBE_TIMEOUT_MS, attempts: 1 });
   if (probe.state !== 'live') throw new Error(`Could not verify this process for the tunnel lock: ${probe.state === 'unverifiable' ? probe.reason : 'gone'}`);
   return { pid: process.pid, processStartedAt: probe.processStartedAt, acquiredAt: new Date().toISOString() };
 }

@@ -9,7 +9,7 @@ import { request as httpRequest } from 'node:http';
 import type { TunnelRunState, TunnelStatus } from '@lnwjud/ipc-contracts';
 import { probeProcessStart, type ProcessProbeResult } from '@lnwjud/mcp-server';
 import { formatTunnelExitMessage, tunnelExitHintFromLog } from './tunnel-exit.js';
-import { acquireTunnelLock, readTunnelLock, type TunnelLockAcquisition, type TunnelLockOwner } from './tunnel-lock.js';
+import { acquireTunnelLock, readTunnelLock, refreshTunnelLockHeartbeat, HEARTBEAT_INTERVAL_MS, type TunnelLockAcquisition, type TunnelLockOwner } from './tunnel-lock.js';
 import { rewriteTunnelYamlMcpCommand } from './tunnel-profile.js';
 
 const execFileAsync = promisify(execFile);
@@ -73,6 +73,7 @@ export class TunnelController {
   private restartWindowStartedAt = 0;
   private lastApiKey: string | null = null;
   private tunnelLock: TunnelLockAcquisition | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
   private lifecycleTail: Promise<void> = Promise.resolve();
   private startInFlight: Promise<TunnelStatus> | null = null;
   private startAbortController: AbortController | null = null;
@@ -462,11 +463,42 @@ export class TunnelController {
       }
       this.foreignOwner = null;
       this.tunnelLock = claim;
+      // Task Extent-V1.1.0 (heartbeat): keep lastHeartbeatAt fresh so a crashed
+      // owner's lock becomes reclaimable instead of permanently unverifiable.
+      this.startHeartbeat();
       return true;
     } catch (error: unknown) {
       this.state = 'error';
       this.message = error instanceof Error ? error.message : 'Could not acquire tunnel ownership lock';
       return false;
+    }
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    const claim = this.tunnelLock;
+    if (claim === null) return;
+    this.heartbeatTimer = setInterval(() => {
+      void (async (): Promise<void> => {
+        const active = this.tunnelLock;
+        if (active === null) { this.stopHeartbeat(); return; }
+        try {
+          const refreshed = await refreshTunnelLockHeartbeat(this.profileDirectory(), active.owner);
+          if (!refreshed && this.tunnelLock === active) {
+            // Ownership was taken over elsewhere; drop the stale handle.
+            this.tunnelLock = null;
+            this.stopHeartbeat();
+          }
+        } catch { /* transient FS/mutex failure: retry on the next tick */ }
+      })();
+    }, HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer.unref?.();
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
   }
 
@@ -488,6 +520,7 @@ export class TunnelController {
   private async releaseTunnelLock(): Promise<void> {
     const claim = this.tunnelLock;
     if (claim === null) return;
+    this.stopHeartbeat();
     if (!(await claim.release())) throw new Error('Tunnel ownership lock release could not be confirmed; ownership retained');
     if (this.tunnelLock === claim) this.tunnelLock = null;
   }
