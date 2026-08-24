@@ -79,3 +79,4 @@ docs/benchmarks/*
 .DS_Store
 Thumbs.db
 lnwjud-incident.json
+tunnel-client-v0.0.12-windows-amd64/
