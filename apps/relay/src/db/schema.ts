@@ -67,6 +67,12 @@ const MIGRATIONS: readonly Migration[] = [
           updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_journal_profile ON request_journal(profile_id);
+
+        CREATE TABLE IF NOT EXISTS profile_catalogs (
+          profile_id TEXT PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+          tools_json TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
       `);
     },
   },
