@@ -31,12 +31,24 @@ export async function syncAllDriveRoots(workspaceService: WorkspaceService): Pro
   if (roots.length === 0) return null;
 
   const existing = await workspaceService.list();
+  const registeredKeys = new Set<string>();
+  for (const entry of existing) {
+    // A drive may already be registered with its drive-letter root_path while its
+    // canonical real root is a UNC target (mapped/network drives). Match on both
+    // identities, otherwise re-registering the same drive violates the
+    // UNIQUE(root_path) constraint and breaks every dashboard refresh.
+    registeredKeys.add(normalizeWorkspaceRoot(entry.realRootPath).toLowerCase());
+    registeredKeys.add(normalizeWorkspaceRoot(entry.rootPath).toLowerCase());
+  }
   let primary: Workspace | null = null;
   for (const root of roots) {
     const target = normalizeWorkspaceRoot(root).toLowerCase();
-    const found = existing.find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === target);
-    if (found !== undefined) {
-      if (primary === null) primary = found;
+    if (registeredKeys.has(target)) {
+      const found = existing.find((entry) =>
+        normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === target
+        || normalizeWorkspaceRoot(entry.rootPath).toLowerCase() === target,
+      );
+      if (found !== undefined && primary === null) primary = found;
       continue;
     }
     const added = await workspaceService.add(`Local Disk ${root[0]}:`, root);
