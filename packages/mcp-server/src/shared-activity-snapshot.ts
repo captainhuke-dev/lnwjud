@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 const SNAPSHOT_FILE = 'lnwjud.mcp.activity.json';
 const SNAPSHOT_VERSION = 1;
 const DEFAULT_STALE_AFTER_MS = 5_000;
+export const PROCESS_PROBE_TIMEOUT_MS = 10_000;
 const DEFAULT_HEARTBEAT_MS = 1_000;
 const DEFAULT_PROCESS_PROBE_TIMEOUT_MS = 1_750;
 const DEFAULT_PROCESS_PROBE_ATTEMPTS = 2;
@@ -195,7 +196,7 @@ export async function readSharedActivitySnapshot(options: ReadSharedActivitySnap
 }
 
 export async function currentSharedActivityOwner(): Promise<SharedActivityOwner> {
-  const probe = await probeProcessStart(process.pid);
+  const probe = await probeProcessStart(process.pid, { timeoutMs: PROCESS_PROBE_TIMEOUT_MS, attempts: 1 });
   if (probe.state !== 'live') throw new Error(`Could not verify STDIO activity owner process: ${probe.state === 'unverifiable' ? probe.reason : 'gone'}`);
   return { pid: process.pid, processStartedAt: probe.processStartedAt };
 }
