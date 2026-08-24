@@ -73,6 +73,25 @@ const MIGRATIONS: readonly Migration[] = [
           tools_json TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS oauth_codes (
+          id TEXT PRIMARY KEY NOT NULL,
+          code_hash TEXT NOT NULL UNIQUE,
+          client_id TEXT NOT NULL,
+          redirect_uri TEXT NOT NULL,
+          scope TEXT NOT NULL DEFAULT 'mcp',
+          code_challenge TEXT NOT NULL,
+          code_created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS oauth_tokens (
+          token_hash TEXT PRIMARY KEY NOT NULL,
+          client_id TEXT NOT NULL,
+          scope TEXT NOT NULL DEFAULT 'mcp',
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_oauth_tokens_client ON oauth_tokens(client_id);
       `);
     },
   },

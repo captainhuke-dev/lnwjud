@@ -6,6 +6,7 @@ import { DeviceRegistry } from './channels/device-registry.js';
 import { registerDeviceChannel, HEARTBEAT_INTERVAL_MS } from './channels/device-channel.js';
 import { CatalogService } from './catalog/catalog-service.js';
 import { RequestJournal } from './journal/request-journal.js';
+import { OAuthService } from './oauth/oauth-service.js';
 import type { SqliteDatabase } from '@lnwjud/storage';
 
 const PORT = Number.parseInt(process.env.RELAY_PORT ?? '10100', 10);
@@ -18,19 +19,71 @@ const DEVICE_TIMEOUT_MS = Number.parseInt(process.env.RELAY_DEVICE_TIMEOUT_MS ??
 export interface RelayContext {
   registry: DeviceRegistry;
   catalog: CatalogService;
-  journal: RequestJournal;
+  journal: RequestJournal | null;
+  oauth: OAuthService | null;
 }
 
 export async function buildRelayServer(db?: SqliteDatabase): Promise<{ app: ReturnType<typeof Fastify>; context: RelayContext }> {
   const app = Fastify({ logger: false });
   const registry = new DeviceRegistry();
-  let catalog: CatalogService;
+  let catalog: CatalogService | undefined;
   let journal: RequestJournal | null = null;
+  let oauth: OAuthService | null = null;
 
   if (db !== undefined) {
     catalog = new CatalogService(db);
     journal = new RequestJournal(db);
+    oauth = new OAuthService(db);
   }
+
+  // Task 1.7 — OAuth PKCE endpoints. Enabled only when a database is attached
+  // (the pure in-memory test path has no token store).
+  if (oauth !== null) {
+    app.get('/oauth/authorize', async (request, reply) => {
+      const query = request.query as Record<string, string | undefined>;
+      try {
+        const grant = oauth!.beginAuthorization(
+          query.client_id ?? '',
+          query.redirect_uri ?? '',
+          query.code_challenge ?? '',
+          query.scope ?? 'mcp',
+        );
+        const redirect = new URL(query.redirect_uri!);
+        redirect.searchParams.set('code', grant.authorizationCode);
+        redirect.searchParams.set('state', query.state ?? '');
+        return reply.redirect(302, redirect.toString());
+      } catch (error: unknown) {
+        return reply.code(400).send({
+          error: 'invalid_request',
+          description: error instanceof Error ? error.message : 'invalid authorization request',
+        });
+      }
+    });
+
+    app.post('/oauth/token', async (request, reply) => {
+      const body = (request.body ?? {}) as Record<string, string>;
+      if (body.grant_type !== 'authorization_code') {
+        return reply.code(400).send({ error: 'unsupported_grant_type' });
+      }
+      const token = oauth!.exchangeCode({
+        code: body.code ?? '',
+        clientId: body.client_id ?? '',
+        redirectUri: body.redirect_uri ?? '',
+        codeVerifier: body.code_verifier ?? '',
+      });
+      if (token === null) {
+        return reply.code(400).send({ error: 'invalid_grant', description: 'code expired, consumed, or verifier mismatch' });
+      }
+      return reply.code(200).send({
+        access_token: token.accessToken,
+        token_type: token.tokenType,
+        expires_in: token.expiresIn,
+      });
+    });
+  }
+
+  // Task 1.7 — Bearer guard on the public MCP endpoint.
+  const requireToken = oauth !== null;
 
   app.get('/healthz', async () => ({ status: 'live' }));
   app.get('/readyz', async () => ({ status: 'ready' }));
@@ -38,9 +91,16 @@ export async function buildRelayServer(db?: SqliteDatabase): Promise<{ app: Retu
 
   registerDeviceChannel(app, registry);
 
-  // Public MCP endpoint — stable per-profile URL (Phase 1 Task 1.4 + 1.5 + 1.6).
+  // Public MCP endpoint — stable per-profile URL (Phase 1 Task 1.4 + 1.5 + 1.6 + 1.7).
   app.post('/p/:profileId/mcp', async (request, reply) => {
     const { profileId } = request.params as { profileId: string };
+    if (requireToken && !oauth!.validateAuthorizationHeader(request.headers.authorization)) {
+      return reply.code(401).send({
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: -32001, message: 'UNAUTHORIZED', data: { retryable: false } },
+      });
+    }
     const body = (request.body ?? {}) as Record<string, unknown>;
     const method = typeof body.method === 'string' ? body.method : '';
     const aiId = body.id ?? null;
@@ -129,12 +189,7 @@ export async function buildRelayServer(db?: SqliteDatabase): Promise<{ app: Retu
     process.stderr.write(`lnwjud relay ready on ${HOST}:${PORT} (heartbeat ${HEARTBEAT_INTERVAL_MS}ms)\n`);
   });
 
-  function setCatalog(catalogService: CatalogService): void {
-    catalog = catalogService;
-  }
-  void setCatalog;
-
-  return { app, context: { registry, ...(catalog !== undefined ? { catalog } : {}), ...(journal !== null ? { journal } : {}) } as unknown as RelayContext };
+  return { app, context: { registry, catalog: catalog!, journal, oauth } };
 }
 
 export async function startRelay(): Promise<void> {
