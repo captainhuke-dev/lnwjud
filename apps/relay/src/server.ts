@@ -7,6 +7,7 @@ import { registerDeviceChannel, HEARTBEAT_INTERVAL_MS } from './channels/device-
 import { CatalogService } from './catalog/catalog-service.js';
 import { RequestJournal } from './journal/request-journal.js';
 import { OAuthService } from './oauth/oauth-service.js';
+import { detectProtocolVersion, LegacySessionFacade, validateForEra } from './gateway/protocol-facade.js';
 import type { SqliteDatabase } from '@lnwjud/storage';
 
 const PORT = Number.parseInt(process.env.RELAY_PORT ?? '10100', 10);
@@ -18,9 +19,10 @@ const DEVICE_TIMEOUT_MS = Number.parseInt(process.env.RELAY_DEVICE_TIMEOUT_MS ??
 
 export interface RelayContext {
   registry: DeviceRegistry;
-  catalog: CatalogService;
+  catalog: CatalogService | undefined;
   journal: RequestJournal | null;
   oauth: OAuthService | null;
+  legacySessions: LegacySessionFacade;
 }
 
 export async function buildRelayServer(db?: SqliteDatabase): Promise<{ app: ReturnType<typeof Fastify>; context: RelayContext }> {
@@ -29,6 +31,7 @@ export async function buildRelayServer(db?: SqliteDatabase): Promise<{ app: Retu
   let catalog: CatalogService | undefined;
   let journal: RequestJournal | null = null;
   let oauth: OAuthService | null = null;
+  const legacySessions = new LegacySessionFacade();
 
   if (db !== undefined) {
     catalog = new CatalogService(db);
@@ -104,6 +107,35 @@ export async function buildRelayServer(db?: SqliteDatabase): Promise<{ app: Retu
     const body = (request.body ?? {}) as Record<string, unknown>;
     const method = typeof body.method === 'string' ? body.method : '';
     const aiId = body.id ?? null;
+
+    // Task 1.8 — dual protocol era detection.
+    const headerVersion = request.headers['mcp-protocol-version'] as string | undefined;
+    const era = detectProtocolVersion(headerVersion, body);
+    if (method === 'initialize') {
+      // Legacy clients receive a synthetic session id; 2026 clients are stateless.
+      const session = legacySessions.createSession();
+      reply.header('Mcp-Session-Id', session.sessionId);
+    } else {
+      const sessionIdHeader = request.headers['mcp-session-id'] as string | undefined;
+      if (era === '2025-11-25' && sessionIdHeader !== undefined) {
+        const session = legacySessions.getSession(sessionIdHeader);
+        if (session === null) {
+          return reply.code(404).send({
+            jsonrpc: '2.0',
+            id: aiId,
+            error: { code: -32001, message: 'SESSION_NOT_FOUND', data: { retryable: false, reinitialize: true } },
+          });
+        }
+      }
+    }
+    const eraError = validateForEra(method, era);
+    if (eraError !== null) {
+      return reply.code(405).send({
+        jsonrpc: '2.0',
+        id: aiId,
+        error: { code: -32007, message: eraError, data: { retryable: false } },
+      });
+    }
 
     // Idempotency key: AI-supplied or relay-generated.
     const meta = (body.params as { _meta?: Record<string, unknown> } | undefined)?._meta;
@@ -189,7 +221,7 @@ export async function buildRelayServer(db?: SqliteDatabase): Promise<{ app: Retu
     process.stderr.write(`lnwjud relay ready on ${HOST}:${PORT} (heartbeat ${HEARTBEAT_INTERVAL_MS}ms)\n`);
   });
 
-  return { app, context: { registry, catalog: catalog!, journal, oauth } };
+  return { app, context: { registry, catalog, journal, oauth, legacySessions } };
 }
 
 export async function startRelay(): Promise<void> {

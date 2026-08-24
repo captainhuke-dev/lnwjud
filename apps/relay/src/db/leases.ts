@@ -20,10 +20,6 @@ export interface LeaseRow {
 
 const DEFAULT_LEASE_SECONDS = 15;
 
-function isoNow(): string {
-  return new Date().toISOString().replace(/\.(\d{3})\d*Z$/, '.$1Z');
-}
-
 export function acquireLease(
   db: SqliteDatabase,
   profileId: string,

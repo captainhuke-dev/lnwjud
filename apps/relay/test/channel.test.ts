@@ -2,7 +2,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { buildRelayServer } from '../src/server.js';
 
 const cleanups: Array<() => Promise<void>> = [];
