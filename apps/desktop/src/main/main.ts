@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Tray, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { access } from 'node:fs/promises';
 import { autoUpdater } from 'electron-updater';
 import {
@@ -1255,7 +1256,9 @@ function configureDataPath(): string {
 // Task Extent-V1.1.0: load the deployment .env before any bootstrap reads
 // process.env (unrestricted mode, capability roots, data path, …). Environment
 // variables already set in the real environment always win.
-loadDotEnvFile(defaultEnvCandidates(__dirname));
+// The bundle is an ES module (no __dirname); derive the app dir from import.meta.url.
+const mainAppDir = path.dirname(fileURLToPath(import.meta.url));
+loadDotEnvFile(defaultEnvCandidates(mainAppDir));
 
 const gotInstanceLock = shouldHoldSingleInstanceLock(process.argv) ? app.requestSingleInstanceLock() : true;
 if (!gotInstanceLock) {
