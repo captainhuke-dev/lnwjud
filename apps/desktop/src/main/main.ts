@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Tray, type IpcMainInvokeEvent } from 'electron';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { access } from 'node:fs/promises';
@@ -44,6 +45,8 @@ import { readSharedActivitySnapshot, startMcpStdio } from '@lnwjud/mcp-server';
 import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, resolveLnwjudDataPath } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync } from '@lnwjud/storage';
 import { createDesktopRuntime, type DesktopRuntime } from './desktop-services.js';
+import { invokeToolViaRegistry, listRegistryTools } from './relay-mcp-bridge.js';
+import { RelayAgent } from './relay-agent.js';
 import { defaultEnvCandidates, loadDotEnvFile } from './env-file.js';
 import { DesktopShutdownCoordinator } from './desktop-shutdown.js';
 import { shouldHoldSingleInstanceLock, wantsMcpStdio } from './instance-lock.js';
@@ -1097,6 +1100,35 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
   }
 }
 
+let relayAgent: RelayAgent | null = null;
+
+/** Task 2.1 — start the Persistent Relay agent when configured via env. */
+function bootstrapRelayAgent(): void {
+  const relayUrl = process.env.LNWJUD_RELAY_URL?.trim();
+  if (relayUrl === undefined || relayUrl.length === 0) return; // relay mode not enabled
+  const deviceId = process.env.LNWJUD_DEVICE_ID?.trim() || os.hostname();
+  const profileIds = (process.env.LNWJUD_RELAY_PROFILES?.split(';') ?? [])
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (profileIds.length === 0) return;
+  const runtimeVersion = APP_VERSION;
+  // Reuse the desktop runtime's tool surface through its MCP services.
+  const runtime = desktopRuntime;
+  if (runtime === null) return;
+  const mcpOptions = runtime.relayMcpOptions();
+  relayAgent = new RelayAgent({
+    relayUrl,
+    deviceId,
+    profileIds,
+    runtimeVersion,
+    invokeTool: async (name: string, args: unknown): Promise<unknown> => {
+      return await invokeToolViaRegistry(mcpOptions, name, args);
+    },
+    listTools: (): readonly unknown[] => listRegistryTools(mcpOptions),
+  });
+  relayAgent.start();
+}
+
 function bootstrapDesktop(): void {
   const dataPath = configureDataPath();
   void app.whenReady().then(async () => {
@@ -1114,6 +1146,7 @@ function bootstrapDesktop(): void {
     } catch (error: unknown) {
       console.error(`MCP auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
+    bootstrapRelayAgent();
     createDesktopWindow();
     createDesktopTray();
     initAutoUpdater(runtime);

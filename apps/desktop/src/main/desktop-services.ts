@@ -139,6 +139,8 @@ export interface DesktopRuntime {
   createBackup(reason?: BackupReason): Promise<BackupSummary>;
   ensureDefaultWorkspace(rootPath: string): Promise<string>;
   autoStartMcp(): Promise<McpConnectionStatus>;
+  /** MCP server options for non-MCP transports (relay agent). */
+  relayMcpOptions(): import('@lnwjud/mcp-server').McpServerOptions;
   close(): Promise<void>;
 }
 
@@ -566,6 +568,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     logHub,
     getLocale: (): UiLocale => readLocale(settingsRepository),
     getUserSettings: (): UserSettings => readSettings(),
+    relayMcpOptions: (): import('@lnwjud/mcp-server').McpServerOptions => ({
+      services: mcpServices,
+      actor: mcpActor,
+      activityTracker,
+    }),
     createBackup: (reason: BackupReason = 'manual'): Promise<BackupSummary> => backupService.create(reason),
     ensureDefaultWorkspace: async (rootPath: string): Promise<string> => {
       await ensureMachineRoots(rootPath);

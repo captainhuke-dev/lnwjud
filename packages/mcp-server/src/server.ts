@@ -25,6 +25,24 @@ export interface McpServerOptions {
   readonly runBudgetGuard?: RunBudgetGuard;
 }
 
+/** Expose registry-backed invocation for non-MCP transports (e.g. relay agent). */
+export function invokeViaRegistry(
+  options: McpServerOptions,
+  name: string,
+  input: unknown,
+): Promise<CallToolResult> {
+  const registry = new ToolRegistry(options.services, options.actor, {
+    ...(options.diagnostic === undefined ? {} : { diagnostic: options.diagnostic }),
+    ...(options.activity === undefined ? {} : { activity: options.activity }),
+    ...(options.activityTracker === undefined ? {} : { activityTracker: options.activityTracker }),
+    ...(options.profileProvider === undefined ? {} : { profileProvider: options.profileProvider }),
+    ...(options.allowAiDeleteProvider === undefined ? {} : { allowAiDeleteProvider: options.allowAiDeleteProvider }),
+    ...(options.codexToolsEnabled === undefined ? {} : { codexToolsEnabled: options.codexToolsEnabled }),
+    ...(options.incrementalVerifier === undefined ? {} : { incrementalVerifier: options.incrementalVerifier }),
+  });
+  return registry.invoke(name, input) as unknown as Promise<CallToolResult>;
+}
+
 export function createMcpServer(options: McpServerOptions): McpServer {
   const registry = new ToolRegistry(options.services, options.actor, {
     ...(options.diagnostic === undefined ? {} : { diagnostic: options.diagnostic }),
