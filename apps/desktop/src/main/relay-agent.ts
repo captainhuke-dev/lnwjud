@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { ExecutionLedger } from './execution-ledger.js';
 import WebSocket from 'ws';
 
 /**
@@ -29,6 +30,7 @@ const BACKOFF_CAP_MS = 15_000;
 
 export class RelayAgent {
   private socket: WebSocket | null = null;
+  private readonly ledger = new ExecutionLedger();
   private reconnectAttempt = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -112,8 +114,35 @@ export class RelayAgent {
     // Forwarded JSON-RPC request → invoke the local runtime in-process.
     const requestId = String(frame.id ?? '');
     const method = typeof frame.method === 'string' ? frame.method : '';
+    // Task 2.2 — effectively-once guard: committed replays get the cached
+    // result; in-flight non-idempotent calls refuse duplicates.
+    const params = frame.params as { arguments?: Record<string, unknown> } | undefined;
+    const toolName = typeof params?.arguments?.name === 'string'
+      ? String(params.arguments.name)
+      : (method === 'tools/call' ? '' : method);
+    const check = this.ledger.inspect(requestId, toolName);
+    const prior = check.entry;
+    if (check.replay && prior !== null && prior.resultPayload !== null) {
+      this.socket?.send(JSON.stringify({
+        jsonrpc: '2.0',
+        id: requestId,
+        result: JSON.parse(prior.resultPayload) as unknown,
+        replayed: true,
+      }));
+      return;
+    }
+    if (check.replay) {
+      this.socket?.send(JSON.stringify({
+        jsonrpc: '2.0',
+        id: requestId,
+        error: { code: -32002, message: 'REQUEST_IN_FLIGHT', data: { retryable: true } },
+      }));
+      return;
+    }
+    this.ledger.markStarted(requestId, toolName);
     try {
       const result = await this.invokeMethod(method, frame.params);
+      this.ledger.commit(requestId, JSON.stringify(result));
       this.socket?.send(JSON.stringify({ jsonrpc: '2.0', id: requestId, result }));
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'tool execution failed';
