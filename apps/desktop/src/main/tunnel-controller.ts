@@ -653,7 +653,11 @@ export class TunnelController {
     if (launcher === null) return;
     try {
       const yaml = await readFile(this.profilePath(), 'utf8');
-      const next = rewriteTunnelYamlMcpCommand(yaml, launcher, true);
+      // Task Extent-V1.1.0: never inject --reset-workspaces into the tunnel MCP
+      // command. The stdio child shares the desktop's SQLite database, so a reset
+      // wipes every user-registered workspace on each tunnel channel restart and
+      // the Projects page appears to 'forget' added projects.
+      const next = rewriteTunnelYamlMcpCommand(yaml, launcher, false);
       if (next !== yaml) await writeFile(this.profilePath(), next, 'utf8');
     } catch {
       // Profile rewrite is best-effort; tunnel-client still starts with the existing YAML.
