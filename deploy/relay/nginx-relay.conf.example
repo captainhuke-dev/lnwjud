@@ -1,0 +1,41 @@
+# lnwjud Relay — nginx reverse proxy snippet
+#
+# TLS terminates at your existing nginx. Proxy to the relay container on 192.168.0.3:10100.
+# The /agent/ws location MUST keep WebSocket upgrade headers and a long read timeout
+# (device heartbeat is every 5s; idle timeout would otherwise kill the channel).
+
+server {
+    listen 443 ssl;
+    server_name mcp.example.com;          # ← your TLS hostname
+
+    # ssl_certificate     /etc/letsencrypt/live/mcp.example.com/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/mcp.example.com/privkey.pem;
+
+    # Public MCP endpoint for AI clients (ChatGPT/Claude/Codex connectors)
+    location /p/ {
+        proxy_pass http://192.168.0.3:10100;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Device agent channel (outbound WS from desktop)
+    location /agent/ws {
+        proxy_pass http://192.168.0.3:10100;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # Health / ops
+    location /healthz {
+        proxy_pass http://192.168.0.3:10100;
+    }
+    location /readyz {
+        proxy_pass http://192.168.0.3:10100;
+    }
+}

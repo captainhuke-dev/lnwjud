@@ -1,0 +1,27 @@
+{
+  "name": "@lnwjud/relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "lnwjud Persistent MCP Profile Relay — stable public MCP URL with device routing.",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc --outDir dist",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lnwjud/shared": "workspace:*",
+    "better-sqlite3": "*",
+    "fastify": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.4",
+    "ws": "^8.18.0",
+    "@types/ws": "^8.18.0"
+  }
+}

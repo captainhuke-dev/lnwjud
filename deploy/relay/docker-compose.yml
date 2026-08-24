@@ -1,0 +1,26 @@
+# lnwjud Persistent MCP Relay — deploy on 192.168.0.3
+# Usage: docker compose up -d
+# nginx (TLS box) upstream: http://192.168.0.3:10100
+#   location /agent/ws  → WS upgrade headers + proxy_read_timeout 3600s
+#   location /p/        → normal proxy
+services:
+  relay:
+    build:
+      context: ../../
+      dockerfile: deploy/relay/Dockerfile
+    container_name: lnwjud-relay
+    restart: unless-stopped
+    ports:
+      - "10100:10100"
+    environment:
+      RELAY_PORT: "10100"
+      RELAY_HOST: "0.0.0.0"
+      RELAY_DB_PATH: "/data/relay.sqlite"
+      RELAY_PUBLIC_URL: "https://your-nginx-host"   # change to your TLS hostname
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:10100/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
