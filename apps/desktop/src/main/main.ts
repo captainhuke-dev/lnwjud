@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Tray, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { access } from 'node:fs/promises';
 import { autoUpdater } from 'electron-updater';
 import {
@@ -47,6 +48,7 @@ import { readSharedActivitySnapshot, startMcpStdio } from '@lnwjud/mcp-server';
 import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, resolveLnwjudDataPath } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync } from '@lnwjud/storage';
 import { createDesktopRuntime, type DesktopRuntime } from './desktop-services.js';
+import { defaultEnvCandidates, loadDotEnvFile } from './env-file.js';
 import { DesktopShutdownCoordinator } from './desktop-shutdown.js';
 import { shouldHoldSingleInstanceLock, wantsMcpStdio } from './instance-lock.js';
 import { createLogViewerWindow, createMainWindow, getRendererEntryPath, getWindowIconPath, isAllowedRendererUrl } from './window.js';
@@ -1337,6 +1339,13 @@ function configureDataPath(): string {
   if (restore.applied) console.log(`Database restore applied from ${restore.backupId ?? 'scheduled backup'}`);
   return dataPath;
 }
+
+// Task Extent-V1.1.0: load the deployment .env before any bootstrap reads
+// process.env (unrestricted mode, capability roots, data path, …). Environment
+// variables already set in the real environment always win.
+// The bundle is an ES module (no __dirname); derive the app dir from import.meta.url.
+const mainAppDir = path.dirname(fileURLToPath(import.meta.url));
+loadDotEnvFile(defaultEnvCandidates(mainAppDir));
 
 const gotInstanceLock = shouldHoldSingleInstanceLock(process.argv) ? app.requestSingleInstanceLock() : true;
 if (!gotInstanceLock) {

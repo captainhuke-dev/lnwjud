@@ -26,6 +26,15 @@ describe('tunnel profile MCP command', () => {
     expect(next).toContain('command: "C:/Users/me/AppData/Local/Programs/lnwjud/lnwjud-mcp-stdio.cmd"');
   });
 
+  it('does not add --reset-workspaces when rewriting to the packaged launcher', () => {
+    // The stdio child shares the desktop database; resetting would wipe
+    // user-registered workspaces on every tunnel restart.
+    const yaml = '      command: "C:/old/lnwjud-mcp-stdio.cmd --reset-workspaces"';
+    const next = rewriteTunnelYamlMcpCommand(yaml, 'D:/lnwjud/lnwjud-mcp-stdio.cmd', false);
+    expect(next).toContain('command: "D:/lnwjud/lnwjud-mcp-stdio.cmd"');
+    expect(next).not.toContain('--reset-workspaces');
+  });
+
   it('keeps lnwjud.exe --mcp-stdio as the tunnel MCP command', () => {
     const yaml = '      command: "C:/old/lnwjud-mcp-stdio.cmd --workspace E:/lnwjud"';
     expect(rewriteTunnelYamlMcpCommand(yaml, 'D:/lnwjud/lnwjud.exe --mcp-stdio')).toContain(

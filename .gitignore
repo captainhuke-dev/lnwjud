@@ -81,3 +81,4 @@ docs/benchmarks/*
 Thumbs.db
 lnwjud-incident.json
 .codegraph
+tunnel-client-v0.0.12-windows-amd64/

@@ -47,6 +47,7 @@ function resolveDataPath(): string {
 async function main(): Promise<void> {
   const dataPath = resolveDataPath();
   fs.mkdirSync(dataPath, { recursive: true });
+
   const restore = applyPendingSqliteRestoreSync(path.join(dataPath, 'lnwjud.sqlite'), path.join(dataPath, 'backups'));
   if (restore.error !== undefined) process.stderr.write(`lnwjud MCP stdio: scheduled restore failed: ${restore.error}\n`);
   if (restore.applied) process.stderr.write(`lnwjud MCP stdio: restored database from ${restore.backupId ?? 'scheduled backup'}\n`);

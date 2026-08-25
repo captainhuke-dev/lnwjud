@@ -2,7 +2,7 @@ import { access, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { acquireTunnelLock, readTunnelLock, type TunnelLockOwner } from '../src/main/tunnel-lock.js';
+import { acquireTunnelLock, isHeartbeatStale, readTunnelLock, refreshTunnelLockHeartbeat, HEARTBEAT_STALE_MS, type TunnelLockOwner } from '../src/main/tunnel-lock.js';
 
 const temporaryRoots: string[] = [];
 
@@ -12,6 +12,14 @@ afterEach(async () => {
 
 function owner(pid: number, processStartedAt: string): TunnelLockOwner {
   return { pid, processStartedAt, acquiredAt: '2026-08-20T00:00:00.000Z' };
+}
+
+/** v2 locks gain lastHeartbeatAt; strip it so strict equality tests stay owner-focused. */
+function stripHeartbeat(record: TunnelLockOwner | null): TunnelLockOwner | null {
+  if (record === null) return null;
+  const { ...rest } = record;
+  const clone = { pid: rest.pid, processStartedAt: rest.processStartedAt, acquiredAt: rest.acquiredAt };
+  return clone;
 }
 
 describe('lnwjud tunnel ownership lock', () => {
@@ -26,11 +34,11 @@ describe('lnwjud tunnel ownership lock', () => {
     const acquired = first.acquired ? first : second;
     const rejected = first.acquired ? second : first;
     expect(acquired.acquired).toBe(true);
-    expect(rejected).toEqual({ acquired: false, owner: acquired.owner });
+    expect(rejected).toEqual({ acquired: false, owner: { ...acquired.owner, lastHeartbeatAt: (rejected as { owner: TunnelLockOwner }).owner.lastHeartbeatAt } });
     if (acquired.acquired) await acquired.release();
   });
 
-  it('publishes no partial fixed record and gives a delayed writer no second ownership', async () => {
+  it('publishes no partial fixed record and gives a delayed writer no second ownership', { timeout: 30_000 }, async () => {
     const directory = await temporaryDirectory();
     const firstOwner = owner(111, '2026-08-20T00:00:00.000Z');
     const secondOwner = owner(222, '2026-08-20T00:01:00.000Z');
@@ -58,8 +66,8 @@ describe('lnwjud tunnel ownership lock', () => {
     const [first, second] = await Promise.all([firstAttempt, secondPending]);
 
     expect(first.acquired).toBe(true);
-    expect(second).toEqual({ acquired: false, owner: firstOwner });
-    expect(await readTunnelLock(directory)).toEqual(firstOwner);
+    expect(second).toEqual({ acquired: false, owner: second.acquired ? second.owner : { ...firstOwner, lastHeartbeatAt: (second as { owner: TunnelLockOwner }).owner.lastHeartbeatAt } });
+    expect(stripHeartbeat(await readTunnelLock(directory))).toEqual(firstOwner);
     expect((await readdir(directory)).filter((name) => name.includes('.publish.'))).toEqual([]);
     if (first.acquired) await first.release();
   });
@@ -76,7 +84,7 @@ describe('lnwjud tunnel ownership lock', () => {
     });
 
     expect(claim.acquired).toBe(true);
-    expect(await readTunnelLock(directory)).toEqual(owner(404, '2026-08-20T00:02:00.000Z'));
+    expect(stripHeartbeat(await readTunnelLock(directory))).toEqual(owner(404, '2026-08-20T00:02:00.000Z'));
     await claim.release();
   });
 
@@ -117,7 +125,7 @@ describe('lnwjud tunnel ownership lock', () => {
     });
 
     expect(claim.acquired).toBe(true);
-    expect(await readTunnelLock(directory)).toEqual(nextOwner);
+    expect(stripHeartbeat(await readTunnelLock(directory))).toEqual(nextOwner);
     if (claim.acquired) await expect(claim.release()).resolves.toBe(true);
   });
 
@@ -129,7 +137,7 @@ describe('lnwjud tunnel ownership lock', () => {
     await writeFile(path.join(directory, 'lnwjud.tunnel.lock'), JSON.stringify({ version: 1, ...replacement }), 'utf8');
 
     await expect(claim.release()).resolves.toBe(false);
-    expect(await readTunnelLock(directory)).toEqual(replacement);
+    expect(stripHeartbeat(await readTunnelLock(directory))).toEqual(replacement);
   });
 
   it('restores a replacement moved by an owner-release race instead of deleting it', async () => {
@@ -159,7 +167,7 @@ describe('lnwjud tunnel ownership lock', () => {
     allowRelease.resolve();
 
     await expect(releasing).resolves.toBe(false);
-    expect(await readTunnelLock(directory)).toEqual(replacement);
+    expect(stripHeartbeat(await readTunnelLock(directory))).toEqual(replacement);
     const validQuarantines = await Promise.all((await readdir(directory))
       .filter((name) => name.includes('.released.'))
       .map(async (name) => JSON.parse(await readFile(path.join(directory, name), 'utf8')) as unknown));
@@ -189,7 +197,7 @@ describe('lnwjud tunnel ownership lock', () => {
     expect(await readTunnelLock(directory)).toEqual(existing);
   });
 
-  it('serializes stale replacement so two reclaimers and a third publisher cannot fill the fixed-path gap', async () => {
+  it('serializes stale replacement so two reclaimers and a third publisher cannot fill the fixed-path gap', { timeout: 30_000 }, async () => {
     const directory = await temporaryDirectory();
     const stale = owner(941, '2026-08-20T00:00:00.000Z');
     await writeFile(path.join(directory, 'lnwjud.tunnel.lock'), JSON.stringify({ version: 1, ...stale }), 'utf8');
@@ -215,7 +223,8 @@ describe('lnwjud tunnel ownership lock', () => {
     allowPublish.resolve();
     const firstClaim = await first;
     expect(firstClaim.acquired).toBe(true);
-    await expect(Promise.all([second, third])).resolves.toEqual([
+    const [secondResult, thirdResult] = await Promise.all([second, third]) as Array<{ acquired: boolean; owner: TunnelLockOwner }>;
+    expect([secondResult, thirdResult].map((entry) => ({ acquired: entry.acquired, owner: stripHeartbeat(entry.owner) }))).toEqual([
       { acquired: false, owner: firstOwner },
       { acquired: false, owner: firstOwner },
     ]);
@@ -241,6 +250,98 @@ describe('lnwjud tunnel ownership lock', () => {
     expect(await readTunnelLock(directory)).toBeNull();
     await expect(acquireTunnelLock({ profileDirectory: directory, owner: owner(919, '2026-08-20T00:00:00.000Z') })).rejects.toThrow('invalid owner metadata');
     expect(await readFile(lockPath, 'utf8')).toBe(raw);
+  });
+
+  it('accepts version-1 locks without a heartbeat and reclaims them when the probe fails', { timeout: 30_000 }, async () => {
+    const directory = await temporaryDirectory();
+    await writeFile(path.join(directory, 'lnwjud.tunnel.lock'), JSON.stringify({ version: 1, pid: 707, processStartedAt: '2026-08-20T00:00:00.000Z', acquiredAt: '2026-08-20T00:00:00.000Z' }), 'utf8');
+
+    // Version-1 records carry no heartbeat, so an unverifiable probe still blocks.
+    await expect(acquireTunnelLock({
+      profileDirectory: directory,
+      owner: owner(808, '2026-08-20T01:00:00.000Z'),
+      inspectProcess: async () => ({ state: 'unverifiable', reason: 'process_probe_failed' }),
+    })).rejects.toThrow('liveness is unverifiable');
+    expect((await readTunnelLock(directory))?.pid).toBe(707);
+
+    // A gone probe still allows the normal stale-reclaim path for v1 records.
+    const claim = await acquireTunnelLock({
+      profileDirectory: directory,
+      owner: owner(808, '2026-08-20T01:00:00.000Z'),
+      inspectProcess: async () => ({ state: 'gone' }),
+    });
+    expect(claim.acquired).toBe(true);
+    if (claim.acquired) {
+      await claim.release();
+    }
+  });
+
+  it('reclaims a v2 lock with a stale heartbeat even when liveness is unverifiable', async () => {
+    const directory = await temporaryDirectory();
+    const staleHeartbeat = new Date(Date.now() - HEARTBEAT_STALE_MS - 60_000).toISOString();
+    await writeFile(path.join(directory, 'lnwjud.tunnel.lock'), JSON.stringify({
+      version: 2,
+      pid: 707,
+      processStartedAt: '2026-08-20T00:00:00.000Z',
+      acquiredAt: '2026-08-20T00:00:00.000Z',
+      lastHeartbeatAt: staleHeartbeat,
+    }), 'utf8');
+
+    const claim = await acquireTunnelLock({
+      profileDirectory: directory,
+      owner: owner(808, '2026-08-20T01:00:00.000Z'),
+      inspectProcess: async () => ({ state: 'unverifiable', reason: 'process_probe_failed' }),
+    });
+    expect(claim.acquired).toBe(true);
+    if (claim.acquired) {
+      const record = await readTunnelLock(directory);
+      expect(record?.pid).toBe(808);
+      expect(record?.lastHeartbeatAt).toBeDefined();
+      await claim.release();
+    }
+  });
+
+  it('does not reclaim a v2 lock whose heartbeat is fresh', async () => {
+    const directory = await temporaryDirectory();
+    await writeFile(path.join(directory, 'lnwjud.tunnel.lock'), JSON.stringify({
+      version: 2,
+      pid: 707,
+      processStartedAt: '2026-08-20T00:00:00.000Z',
+      acquiredAt: '2026-08-20T00:00:00.000Z',
+      lastHeartbeatAt: new Date().toISOString(),
+    }), 'utf8');
+
+    await expect(acquireTunnelLock({
+      profileDirectory: directory,
+      owner: owner(808, '2026-08-20T01:00:00.000Z'),
+      inspectProcess: async () => ({ state: 'unverifiable', reason: 'process_probe_failed' }),
+    })).rejects.toThrow('liveness is unverifiable');
+    expect((await readTunnelLock(directory))?.pid).toBe(707);
+  });
+
+  it('refreshes the heartbeat while ownership holds and refuses once the lock is lost', { timeout: 30_000 }, async () => {
+    const directory = await temporaryDirectory();
+    const firstOwner = owner(505, '2026-08-20T00:00:00.000Z');
+    const claim = await acquireTunnelLock({ profileDirectory: directory, owner: firstOwner, inspectProcess: async () => ({ state: 'live', processStartedAt: firstOwner.processStartedAt }) });
+    expect(claim.acquired).toBe(true);
+
+    await expect(refreshTunnelLockHeartbeat(directory, claim.owner)).resolves.toBe(true);
+    const refreshed = await readTunnelLock(directory);
+    expect(refreshed?.lastHeartbeatAt).toBeDefined();
+
+    // Simulate losing ownership to another starter.
+    const replacement = owner(606, '2026-08-20T04:00:00.000Z');
+    await writeFile(path.join(directory, 'lnwjud.tunnel.lock'), JSON.stringify({ ...replacement, lastHeartbeatAt: new Date().toISOString() }) , 'utf8');
+    await expect(refreshTunnelLockHeartbeat(directory, claim.owner)).resolves.toBe(false);
+  });
+
+  it('isHeartbeatStale classifies missing and expired heartbeats', () => {
+    expect(isHeartbeatStale({ pid: 1, processStartedAt: '', acquiredAt: '' })).toBe(false);
+    const now = Date.now();
+    const freshOwner: TunnelLockOwner = { pid: 1, processStartedAt: '', acquiredAt: '', lastHeartbeatAt: new Date(now - 1_000).toISOString() };
+    const staleOwner: TunnelLockOwner = { pid: 1, processStartedAt: '', acquiredAt: '', lastHeartbeatAt: new Date(now - HEARTBEAT_STALE_MS - 1_000).toISOString() };
+    expect(isHeartbeatStale(freshOwner, undefined, now)).toBe(false);
+    expect(isHeartbeatStale(staleOwner, undefined, now)).toBe(true);
   });
 });
 

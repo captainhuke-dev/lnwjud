@@ -10,8 +10,9 @@ export function posixPath(filePath: string): string {
   return filePath.replace(/\\/g, '/');
 }
 
-export function rewriteTunnelYamlMcpCommand(yaml: string, stdioCmdPath: string): string {
-  const quoted = `"${posixPath(stdioCmdPath)}"`;
+export function rewriteTunnelYamlMcpCommand(yaml: string, stdioCmdPath: string, resetWorkspaces = false): string {
+  const command = posixPath(stdioCmdPath).trim();
+  const quoted = `"${resetWorkspaces ? `${command} --reset-workspaces` : command}"`;
   if (!COMMAND_LINE.test(yaml)) return yaml;
   return yaml.replace(COMMAND_LINE, `command: ${quoted}`);
 }

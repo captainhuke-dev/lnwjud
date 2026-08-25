@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ActivityTracker } from './activity-tracker.js';
 import {
   SharedActivitySnapshotLease,
+  PROCESS_PROBE_TIMEOUT_MS,
   parseProcessProbeOutput,
   probeProcessStart,
   readSharedActivitySnapshot,
@@ -23,6 +24,10 @@ afterEach(async () => {
 });
 
 describe('process start probe output', () => {
+  it('allows PowerShell process probes enough startup time on Windows', () => {
+    expect(PROCESS_PROBE_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
+  });
+
   it('treats empty stdout as unverifiable instead of proving the process is gone', () => {
     expect(parseProcessProbeOutput('')).toEqual({ state: 'unverifiable', reason: 'invalid_probe_response' });
     expect(parseProcessProbeOutput('GONE')).toEqual({ state: 'gone' });
