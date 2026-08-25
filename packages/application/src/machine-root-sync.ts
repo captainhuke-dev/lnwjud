@@ -31,12 +31,24 @@ export async function syncAllDriveRoots(workspaceService: WorkspaceService): Pro
   if (roots.length === 0) return null;
 
   const existing = await workspaceService.list();
+  const registeredKeys = new Set<string>();
+  for (const entry of existing) {
+    // A drive may already be registered with its drive-letter root_path while its
+    // canonical real root is a UNC target (mapped/network drives). Match on both
+    // identities, otherwise re-registering the same drive violates the
+    // UNIQUE(root_path) constraint and breaks every dashboard refresh.
+    registeredKeys.add(normalizeWorkspaceRoot(entry.realRootPath).toLowerCase());
+    registeredKeys.add(normalizeWorkspaceRoot(entry.rootPath).toLowerCase());
+  }
   let primary: Workspace | null = null;
   for (const root of roots) {
     const target = normalizeWorkspaceRoot(root).toLowerCase();
-    const found = existing.find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === target);
-    if (found !== undefined) {
-      if (primary === null) primary = found;
+    if (registeredKeys.has(target)) {
+      const found = existing.find((entry) =>
+        normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === target
+        || normalizeWorkspaceRoot(entry.rootPath).toLowerCase() === target,
+      );
+      if (found !== undefined && primary === null) primary = found;
       continue;
     }
     const added = await workspaceService.add(`Local Disk ${root[0]}:`, root);
@@ -54,4 +66,31 @@ export function syncMachineRoots(
   preferredPath?: string,
 ): Promise<Workspace | null> {
   return unrestricted ? syncAllDriveRoots(workspaceService) : syncPreferredMachineRoot(workspaceService, preferredPath);
+}
+
+/**
+ * Task Extend-V1.0.0 (mount roots): register extra capability roots
+ * (LNWJUD_CAPABILITY_EXTRA_ROOTS, e.g. NAS mounts M:/Y:/Z:) as workspaces so
+ * restricted mode can resolve absolute paths against them. Restricted mode
+ * keeps its path control — this only widens the registered boundary.
+ */
+export async function syncExtraCapabilityRoots(
+  workspaceService: WorkspaceService,
+  extraRoots: readonly string[],
+): Promise<void> {
+  for (const raw of extraRoots) {
+    const root = normalizeWorkspaceRoot(raw);
+    if (!existsSync(root)) continue;
+    const existing = await workspaceService.list();
+    // A drive letter may already be registered under its canonical UNC real root
+    // (e.g. M:\ -> \\MCT-MAC5\mac5\). Match on both forms before inserting.
+    const target = root.toLowerCase();
+    const alreadyRegistered = existing.some((entry) =>
+      normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === target
+      || normalizeWorkspaceRoot(entry.rootPath).toLowerCase() === target,
+    );
+    if (alreadyRegistered) continue;
+    const label = /^[A-Za-z]:\\?$/.test(root) ? `Local Disk ${root[0]}:` : `Mount ${root}`;
+    await workspaceService.add(label, root);
+  }
 }

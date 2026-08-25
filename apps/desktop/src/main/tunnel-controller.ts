@@ -211,12 +211,23 @@ export class TunnelController {
     const now = Date.now();
     if (!force && now - this.externalProbeAt < EXTERNAL_PROBE_TTL_MS) return this.lastExternalProbe;
     this.externalProbeAt = now;
-    try {
-      const result = await (this.options.isExternalTunnelRunning?.() ?? isLnwjudTunnelProcessRunning());
-      this.lastExternalProbe = result ? 'live' : 'gone';
-    } catch {
-      this.lastExternalProbe = 'unverifiable';
+    // Task Extend-V1.0.0 #1.1: a transient probe failure (PowerShell cold start,
+    // WMI hiccup, timeout) used to hard-fail the start path with "Tunnel process
+    // liveness is unverifiable; refusing to start a possible duplicate" even when no
+    // tunnel was actually running. Retry once before reporting 'unverifiable' so a
+    // single flaky probe cannot block startup.
+    let attempt = 0;
+    while (attempt < 2) {
+      try {
+        const result = await (this.options.isExternalTunnelRunning?.() ?? isLnwjudTunnelProcessRunning());
+        this.lastExternalProbe = result ? 'live' : 'gone';
+        return this.lastExternalProbe;
+      } catch {
+        attempt += 1;
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250));
+      }
     }
+    this.lastExternalProbe = 'unverifiable';
     return this.lastExternalProbe;
   }
 
@@ -609,7 +620,7 @@ export class TunnelController {
     if (launcher === null) return;
     try {
       const yaml = await readFile(this.profilePath(), 'utf8');
-      const next = rewriteTunnelYamlMcpCommand(yaml, launcher);
+      const next = rewriteTunnelYamlMcpCommand(yaml, launcher, true);
       if (next !== yaml) await writeFile(this.profilePath(), next, 'utf8');
     } catch {
       // Profile rewrite is best-effort; tunnel-client still starts with the existing YAML.
@@ -721,9 +732,9 @@ async function findLnwjudTunnelProcessPids(): Promise<readonly number[]> {
       '-NonInteractive',
       '-Command',
       "@(Get-CimInstance Win32_Process -Filter \"Name = 'tunnel-client.exe'\" -ErrorAction Stop | Where-Object { $_.CommandLine -match '(?i)(--profile\\s+lnwjud|lnwjud\\.yaml)' } | Select-Object -ExpandProperty ProcessId) -join ','",
-    ], { windowsHide: true, encoding: 'utf8', timeout: 3_000 }),
+    ], { windowsHide: true, encoding: 'utf8', timeout: 10_000 }),
     new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('tunnel process probe timed out')), 3_500);
+      setTimeout(() => reject(new Error('tunnel process probe timed out')), 10_500);
     }),
   ]);
   return result.stdout.trim().split(',').map((value) => Number(value.trim())).filter((pid) => Number.isInteger(pid) && pid > 0 && pid <= 2_147_483_647);

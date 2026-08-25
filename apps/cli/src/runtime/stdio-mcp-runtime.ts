@@ -141,7 +141,14 @@ export function createStdioMcpRuntime(
     const roots = listed.map((entry) => entry.realRootPath);
     if (roots.length === 0) return effectiveUnrestricted ? [...allFixedDriveRoots()] : [workspace.realRootPath];
     return roots;
-  }, effectiveUnrestricted, options.strictAllowedRoots, () => parsePathList(settingsRepository.get(USER_SETTING_KEYS.capabilityRoots)),
+  }, effectiveUnrestricted, options.strictAllowedRoots, () => [
+    // Task Extend-V1.0.0 (mount roots): allow extra capability roots (e.g. network
+    // mounts M:/Y:/Z:) to be injected per-process without enabling unrestricted
+    // mode, so restricted deployments keep path control while still reaching NAS
+    // drives. Parsed with the same ';'/newline list format as the setting.
+    ...parsePathList(process.env.LNWJUD_CAPABILITY_EXTRA_ROOTS),
+    ...parsePathList(settingsRepository.get(USER_SETTING_KEYS.capabilityRoots)),
+  ],
   () => parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.shellSynchronousWaitSeconds), DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS));
   const actor: FileActor = { clientId: 'cli-mcp-stdio', clientName: 'lnwjud cli MCP' };
   const sharedActivityLease = createSharedActivityLease(process.env.TUNNEL_CLIENT_PROFILE_DIR);
@@ -256,7 +263,7 @@ function createStdioCapabilityService(
   const capabilityRootsProvider = async (): Promise<readonly string[]> => {
     const workspaceRoots = await workspaceRootsProvider();
     if (strictAllowedRoots !== undefined) return workspaceRoots.length > 0 ? workspaceRoots : strictAllowedRoots;
-    const configuredRoots = [...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS), ...configuredRootsProvider()];
+    const configuredRoots = [...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS), ...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_EXTRA_ROOTS), ...configuredRootsProvider()];
     const roots = [...workspaceRoots, ...configuredRoots, ...(unrestricted ? [...allFixedDriveRoots()] : [restrictedRoot])];
     return roots.length === 0 ? [dataPath] : roots;
   };

@@ -30,7 +30,13 @@ export class WorkspacePathGuard {
     const rootResult = await this.resolveRoot(workspace);
     if (!rootResult.ok) return rootResult;
     const absolutePath = path.resolve(rootResult.value, inputPath);
-    if (!isWithin(rootResult.value, absolutePath)) {
+    // Task Extend-V1.0.0 (mount roots): for mapped/network drives the canonical
+    // realpath of the root is a UNC path while the caller addresses files by the
+    // drive letter (e.g. Z:\ vs \\server\share). Containment must accept either
+    // identity, otherwise every drive-letter path is rejected as outside.
+    const roots = this.candidateRoots(workspace, rootResult.value);
+    const withinRoot = roots.some((root) => isWithin(root, absolutePath));
+    if (!withinRoot) {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
     }
 
@@ -41,13 +47,13 @@ export class WorkspacePathGuard {
       const ancestorResult = await this.findExistingAncestor(absolutePath);
       if (ancestorResult.ok) {
         const ancestorRealPath = await realpath(ancestorResult.value.path);
-        if (!isWithin(rootResult.value, ancestorRealPath)) {
+        if (!roots.some((root) => isWithin(root, ancestorRealPath))) {
           return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
         }
       }
       return err(appError('FILE_NOT_FOUND', 'File was not found'));
     }
-    if (!isWithin(rootResult.value, realTarget)) {
+    if (!roots.some((root) => isWithin(root, realTarget))) {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
     }
 
@@ -76,14 +82,15 @@ export class WorkspacePathGuard {
     const rootResult = await this.resolveRoot(workspace);
     if (!rootResult.ok) return rootResult;
     const absolutePath = path.resolve(rootResult.value, inputPath);
-    if (!isWithin(rootResult.value, absolutePath)) {
+    const roots = this.candidateRoots(workspace, rootResult.value);
+    if (!roots.some((root) => isWithin(root, absolutePath))) {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
     }
 
     const ancestorResult = await this.findExistingAncestor(absolutePath);
     if (!ancestorResult.ok) return ancestorResult;
     const ancestorRealPath = await realpath(ancestorResult.value.path);
-    if (!isWithin(rootResult.value, ancestorRealPath)) {
+    if (!roots.some((root) => isWithin(root, ancestorRealPath))) {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
     }
 
@@ -95,7 +102,7 @@ export class WorkspacePathGuard {
     } catch {
       exists = false;
     }
-    if (realTarget !== undefined && !isWithin(rootResult.value, realTarget)) {
+    if (realTarget !== undefined && !roots.some((root) => isWithin(root, realTarget))) {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
     }
 
@@ -135,6 +142,23 @@ export class WorkspacePathGuard {
     } catch {
       return err(appError('WORKSPACE_NOT_FOUND', 'Workspace root was not found'));
     }
+  }
+
+  /**
+   * Task Extend-V1.0.0 (mount roots): a mapped/network drive has two valid
+   * identities — the drive letter (Z:\) and its canonical UNC target
+   * (\\server\share). Containment must accept both so callers may address files
+   * through either form.
+   */
+  private candidateRoots(workspace: Workspace, canonicalRoot: string): readonly string[] {
+    const roots = [canonicalRoot];
+    for (const declared of [workspace.rootPath, workspace.realRootPath]) {
+      const resolved = path.resolve(declared);
+      if (!roots.some((root) => root.toLowerCase() === resolved.toLowerCase())) {
+        roots.push(resolved);
+      }
+    }
+    return roots;
   }
 
   private async findExistingAncestor(absolutePath: string): Promise<Result<ExistingAncestor>> {

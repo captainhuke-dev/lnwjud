@@ -1,4 +1,4 @@
-﻿import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+﻿import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +32,21 @@ rem Use the private Node 24 runtime shipped with lnwjud; no system Node.js is re
 `;
 
 mkdirSync(buildDir, { recursive: true });
-copyFileSync(process.execPath, bundledNodePath);
+// Task Extend-V1.0.0 (build resilience): when a live tunnel-client keeps the
+// previously bundled runtime running, Windows locks the exe and the copy fails
+// with EBUSY. The existing launcher is still a valid Node 24 runtime in that
+// case, so warn and continue instead of failing the whole build pipeline.
+try {
+  copyFileSync(process.execPath, bundledNodePath);
+} catch (error) {
+  const code = error?.code;
+  const locked = code === 'EBUSY' || code === 'EPERM' || code === 'EACCES';
+  const existingRuntimeAvailable = existsSync(bundledNodePath);
+  if (!locked || !existingRuntimeAvailable) throw error;
+  process.stdout.write(
+    `write-stdio-launcher: ${bundledNodePath} is locked by a running process (${code}); `
+      + 'keeping the existing bundled runtime. Stop the tunnel and rebuild to refresh it.\n',
+  );
+}
 writeFileSync(cmdPath, contents.replace(/\n/g, '\r\n'), 'utf8');
 process.stdout.write(`Bundled private Node runtime ${process.versions.node} -> ${bundledNodePath}\n`);

@@ -39,7 +39,7 @@ export function createLocalCapabilityRuntime(
 ): LocalCapabilityRuntime {
   const capabilityRootsProvider = async (): Promise<readonly string[]> => {
     const workspaceRoots = await workspaceRootsProvider();
-    const configuredRoots = [...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS), ...configuredRootsProvider()];
+    const configuredRoots = [...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS), ...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_EXTRA_ROOTS), ...configuredRootsProvider()];
     const roots = unrestricted
       ? [...workspaceRoots, ...configuredRoots, ...allFixedDriveRoots()]
       : [...workspaceRoots, ...configuredRoots];
