@@ -36,7 +36,7 @@ import {
   WslFilesystemCapabilityBackend,
 } from '@lnwjud/capabilities';
 import type { Result } from '@lnwjud/domain';
-import { ALLOW_AI_DELETE_SETTING_KEY, DEFAULT_CODEX_TOOLS_ENABLED, DEFAULT_MCP_CALL_TIMEOUT_MS, DEFAULT_MCP_IDLE_TIMEOUT_MS, DEFAULT_PROCESS_TIMEOUT_MS, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, USER_SETTING_KEYS, loadCheckpointEncryptionKey, parseBooleanSetting, parseCustomPermissionSettings, parseIntegerSetting, parsePathList, parseStringRecordSetting } from '@lnwjud/shared';
+import { ALLOW_AI_DELETE_SETTING_KEY, DESTRUCTIVE_AUTO_APPROVAL_SETTING_KEY, DEFAULT_CODEX_TOOLS_ENABLED, DEFAULT_MCP_CALL_TIMEOUT_MS, DEFAULT_MCP_IDLE_TIMEOUT_MS, DEFAULT_PROCESS_TIMEOUT_MS, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, USER_SETTING_KEYS, loadCheckpointEncryptionKey, parseBooleanSetting, parseCustomPermissionSettings, parseDestructiveAutoApprovalPolicy, parseIntegerSetting, parsePathList, parseStringRecordSetting, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
 import {
   EXTENSIONS_SETTINGS_KEY,
   createLocalExtensionsService,
@@ -63,6 +63,7 @@ export interface StdioMcpRuntime {
   readonly activityReady: Promise<void>;
   readonly profileProvider: () => PermissionProfile;
   readonly allowAiDeleteProvider: () => boolean;
+  readonly destructivePolicyProvider: () => DestructiveAutoApprovalPolicy;
   readonly codexToolsEnabled: boolean;
   close(): Promise<void>;
 }
@@ -96,7 +97,11 @@ export function createStdioMcpRuntime(
   const strictRoots = options.strictAllowedRoots !== undefined;
   const effectiveUnrestricted = strictRoots ? false : unrestricted;
   const profileProvider = (): PermissionProfile => activeProfile;
-  const allowAiDeleteProvider = (): boolean => parseBooleanSetting(settingsRepository.get(ALLOW_AI_DELETE_SETTING_KEY), false);
+  const destructivePolicyProvider = (): DestructiveAutoApprovalPolicy => parseDestructiveAutoApprovalPolicy(
+    settingsRepository.get(DESTRUCTIVE_AUTO_APPROVAL_SETTING_KEY),
+    parseBooleanSetting(settingsRepository.get(ALLOW_AI_DELETE_SETTING_KEY), false),
+  );
+  const allowAiDeleteProvider = (): boolean => destructivePolicyProvider().approvals.delete_file;
 
   const projectService = new ProjectService(workspaceRepository);
   const processService = new ProcessService(workspaceRepository, {
@@ -115,6 +120,9 @@ export function createStdioMcpRuntime(
     unrestricted: effectiveUnrestricted,
     trustedWorkspaceAccess: !strictRoots,
     allowDeleteWithoutConfirmation: allowAiDeleteProvider,
+    protectCriticalFiles: (): boolean => destructivePolicyProvider().protectCriticalFiles,
+    recoverableDelete: (): boolean => destructivePolicyProvider().recoverableDelete,
+    recoveryTrashRoot: path.join(dataPath, 'recovery-trash'),
   });
   const gitService = new GitService(workspaceRepository);
   const workspaceQuery = new WorkspaceQueryService(workspaceRepository, pathGuard);
@@ -158,6 +166,7 @@ export function createStdioMcpRuntime(
           actorId: actor.clientId,
           actorName: actor.clientName,
           ...(event.workspaceId === undefined ? {} : { workspaceId: event.workspaceId }),
+          ...(event.sessionId === undefined ? {} : { sessionId: event.sessionId }),
           toolName: event.toolName,
           callId: event.callId,
           phase: event.phase,
@@ -217,6 +226,7 @@ export function createStdioMcpRuntime(
     activityReady,
     profileProvider,
     allowAiDeleteProvider,
+    destructivePolicyProvider,
     codexToolsEnabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.codexToolsEnabled), DEFAULT_CODEX_TOOLS_ENABLED),
     close: async (): Promise<void> => {
       await (await sharedActivityLease)?.close();

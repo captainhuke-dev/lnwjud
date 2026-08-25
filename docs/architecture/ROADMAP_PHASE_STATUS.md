@@ -93,3 +93,21 @@ The desktop rewrites the managed `lnwjud` profile to the packaged direct-node
 launcher, preserves the long MCP TTL, and bounds automatic reconnect attempts
 so a bad MCP child cannot create an endless connect/disconnect loop. Local HTTP
 and local stdio remain available as separate compatibility paths.
+
+## Multi-workspace / multi-session concurrency upgrade
+
+The concurrency upgrade is tracked in
+[`MULTI_WORKSPACE_CONCURRENCY.md`](./MULTI_WORKSPACE_CONCURRENCY.md). It keeps
+settings global while separating request workspace scope, session-owned handles,
+activity, and logs.
+
+| Phase | Status | Evidence / target |
+| ---: | --- | --- |
+| M0 | complete | Baseline audit, invariants, blockers, file-level implementation plan |
+| M1 | complete | Desktop MCP lifecycle is independent from selected workspace; A/B selection no longer restarts the listener |
+| M2 | complete | Destructive/project scope resolves from each call's registered `workspaceId`; missing/unresolved scope fails closed |
+| M3 | complete | Stable HTTP/STDIO session identity; Process/Codex/Shell/WSL/Tasks ownership is isolated by client + session + workspace, with explicit stateless-HTTP fallback |
+| M4 | complete | Multi-owner STDIO activity v2 + aggregate updater safety; session-namespaced atomic runtime state with locked shared plugin/worktree ledger |
+| M5 | complete | Session-aware audit persistence/query, scoped IPC/process metadata, and Live Log propagation/dedup isolation |
+| M6 | complete | Workspace/session filters/badges plus session/workspace/all clear cursors and filtered Live Log export |
+| M7 | complete | Real two-session/two-workspace Desktop MCP acceptance plus isolation/updater/release gates; repository-wide Full Verification passed, including full tests, acceptance, integration, E2E, build, packaging, Windows installer, diff-check, and public-repo hygiene |

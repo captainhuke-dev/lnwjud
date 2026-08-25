@@ -23,7 +23,7 @@ vi.mock('electron', () => ({
     public static getAllWindows(): unknown[] { return []; }
   },
   dialog: {
-    showSaveDialog: vi.fn(),
+    showSaveDialog: vi.fn(async () => ({ canceled: true, filePath: undefined })),
     showMessageBox: vi.fn(async () => ({ response: 1 })),
   },
   ipcMain: {
@@ -101,6 +101,25 @@ describe('production desktop IPC acceptance', () => {
       .rejects.toThrow(/requires at least one allowed root/);
   });
 
+  it('routes and validates project archive, restore, and registration deletion', async () => {
+    const services = desktopServices();
+    registerIpcHandlers(() => ({}) as never, services);
+    const trusted = { senderFrame: { url: pathToFileURL(getRendererEntryPath()).href } };
+
+    await expect(requiredHandler(ipcChannels.setWorkspaceArchived)(trusted, { workspaceId: 'workspace-production', archived: true }))
+      .resolves.toMatchObject({ id: 'workspace-production', archivedAt: expect.any(String) });
+    expect(services.setWorkspaceArchived).toHaveBeenCalledWith({ workspaceId: 'workspace-production', archived: true });
+    await expect(requiredHandler(ipcChannels.setWorkspaceArchived)(trusted, { workspaceId: 'workspace-production', archived: 'yes' }))
+      .rejects.toThrow(/archived/);
+
+    await expect(requiredHandler(ipcChannels.deleteWorkspace)(trusted, { workspaceId: 'workspace-production' })).resolves.toEqual({
+      deleted: true,
+      workspaceId: 'workspace-production',
+      rootPath: 'E:\\workspace-production',
+    });
+    expect(services.deleteWorkspace).toHaveBeenCalledWith({ workspaceId: 'workspace-production' });
+  });
+
   it('notifies the native tray after a trusted locale change', async () => {
     const services = desktopServices();
     const onLocaleChanged = vi.fn();
@@ -130,6 +149,22 @@ describe('production desktop IPC acceptance', () => {
     });
   });
 
+  it('routes and validates scoped work-log, live-log, and export requests', async () => {
+    const services = desktopServices();
+    registerIpcHandlers(() => ({}) as never, services);
+    const trusted = { senderFrame: { url: pathToFileURL(getRendererEntryPath()).href } };
+
+    await expect(requiredHandler(ipcChannels.clearWorkLog)(trusted, { workspaceId: 'ws-a', sessionId: 'session-a' })).resolves.toEqual({ cleared: true });
+    expect(services.clearWorkLog).toHaveBeenCalledWith({ workspaceId: 'ws-a', sessionId: 'session-a' });
+
+    await expect(requiredHandler(ipcChannels.clearLogBuffer)(trusted, { source: 'mcp', workspaceId: 'ws-a', sessionId: 'session-a' })).resolves.toEqual({ cleared: true });
+    expect(services.clearLogBuffer).toHaveBeenCalledWith({ source: 'mcp', workspaceId: 'ws-a', sessionId: 'session-a' });
+
+    await expect(requiredHandler(ipcChannels.clearLogBuffer)(trusted, { source: 'mcp', sessionId: '' })).rejects.toThrow(/sessionId/);
+    await expect(requiredHandler(ipcChannels.exportLogs)(trusted, { source: 'mcp', filePath: '', workspaceId: 'ws-a', sessionId: 'session-a', query: 'needle' })).resolves.toEqual({ exported: false });
+    await expect(requiredHandler(ipcChannels.exportLogs)(trusted, { source: 'mcp', filePath: '', workspaceId: '' })).rejects.toThrow(/workspaceId/);
+  });
+
   it('enforces the production IPC sender and payload guards before invoking services', async () => {
     const services = desktopServices();
     registerIpcHandlers(() => ({}) as never, services);
@@ -154,6 +189,8 @@ function desktopServices(): DesktopIpcServices {
     listWorkspaces: vi.fn(async () => []),
     addWorkspace: vi.fn(async () => { throw new Error('unused'); }),
     selectWorkspace: vi.fn(async () => { throw new Error('unused'); }),
+    setWorkspaceArchived: vi.fn(async (request) => ({ id: request.workspaceId, displayName: 'Production', rootPath: 'E:\\workspace-production', realRootPath: 'E:\\workspace-production', createdAt: new Date(0).toISOString(), archivedAt: request.archived ? new Date().toISOString() : null, kind: 'project' as const })),
+    deleteWorkspace: vi.fn(async (request) => ({ deleted: true, workspaceId: request.workspaceId, rootPath: 'E:\\workspace-production' })),
     getDashboard: vi.fn(async () => { throw new Error('unused'); }),
     setPermissionProfile: vi.fn(async (request) => ({ profile: request.profile })),
     setUnrestrictedMode: vi.fn(async (request) => ({ unrestricted: request.enabled, restartRequired: false })),

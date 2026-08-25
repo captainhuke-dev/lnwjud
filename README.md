@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Windows-first local AI-agent runtime and MCP gateway</strong><br />
-  <em>213 configurable tools for local files, Git, processes, Windows automation, WSL, browser control, indexing, observability, and extensibility; 207 are advertised by default because codex_* delegation is opt-in.</em>
+  <em>214 configurable tools for local files, Git, processes, Windows automation, WSL, browser control, indexing, observability, and extensibility; 208 are advertised by default because codex_* delegation is opt-in.</em>
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" />
   <img alt="Node" src="https://img.shields.io/badge/Node.js-24.x-339933" />
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-213%20tools-6f42c1" />
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-214%20tools-6f42c1" />
 </p>
 
 ---
@@ -40,12 +40,30 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to the local stdio server, and returns the
 response without opening a public inbound port on the Windows machine.
 
-## Current release: v4.8.5
+## Current version: v4.9.1
 
-The current published installer and runtime contract are `v4.8.5`. The runtime
-advertises **213 MCP tools**. The earlier 184-tool snapshot remains only as the
-compatibility baseline used by the v4 architecture; new v4 gateway capabilities
-are additive.
+The v4.9.1 release target and runtime contract contain **214 configurable MCP tools**,
+with **208 advertised by default** because
+the six `codex_*` delegation tools are opt-in. The earlier 184-tool snapshot remains
+only as the compatibility baseline used by the v4 architecture; new v4 gateway
+capabilities are additive.
+
+### What's new in v4.9.1
+
+- Adds first-class project lifecycle management in the Desktop Projects page: active projects can be archived, archived projects can be restored, and project registrations can be removed with a two-step confirmation.
+- Treats archived workspaces as inactive trust-boundary entries: they remain in SQLite for management/history labels but are excluded from normal runtime/MCP workspace lookup until restored.
+- Makes project removal registration-only. Removing a project from lnwjud does **not** delete its directory, files, Git repository, audit history, or checkpoints; system/machine-root workspaces are protected from archive/remove actions.
+- Repairs selected-workspace state after archive/removal, stops the workspace index watcher, blocks lifecycle changes while tracked Desktop work is active, and restores an archived registration instead of creating a duplicate when the same path is added again.
+- Keeps Home/Git selectors limited to active workspaces while Projects, Work Log, and Live Logs retain the management/history context needed to understand archived workspaces.
+
+### What's new in v4.9.0
+
+- Adds real multi-workspace / multi-session operation on one lnwjud installation: Desktop workspace selection no longer restarts the MCP listener, HTTP/STDIO sessions have stable ownership boundaries, and process/Codex/shell/WSL/task handles are isolated by session and workspace.
+- Makes destructive authorization request-scoped instead of relying on the Desktop-selected project, while keeping destructive auto-approval disabled by default, preserving Protected Critical Files, and supporting recoverable delete/restore.
+- Makes shared activity and durable runtime state safe for concurrent owners with per-owner activity leases, session-namespaced state, atomic writes, inter-process locking, shared plugin/worktree ledgers, and fail-closed checkpoint persistence under I/O contention.
+- Propagates workspace/session metadata through audit, Work Log, Live Logs, and process feeds; adds workspace/session filters, badges, scoped clear controls, and filtered log export without splitting global settings.
+- Adds real two-session/two-workspace release acceptance and release-gate coverage, including parallel build/test/background/Git workflows, handle isolation, updater safety, packaging, and Windows installer verification.
+- Fixes Work Log attribution for shell calls from clients with an older/stale schema: a registered workspace is inferred from cwd for logging only, and the task workspace is retained for later wait/status/logs/result/cancel activity without weakening permission or path policy.
 
 ### What's new in v4.8.5
 
@@ -81,7 +99,7 @@ are additive.
   Non-terminal tasks direct clients back to `tasks/get` polling, while durable task
   state, logs, cancellation, and later result retrieval continue across runtime runs.
 - Clarifies immediate-return `process_start` and `project_*` contracts, updates the
-  live catalog to 213 configurable tools (207 advertised by default because the six
+  live catalog to 214 configurable tools (208 advertised by default because the six
   `codex_*` delegation tools are opt-in), and synchronizes the README, architecture,
   packaging, and release metadata for v4.8.4.
 - Documents the separately configurable STDIO permission profile and optional Strict
@@ -164,9 +182,7 @@ are additive.
 - Selectable stdio/Secure-Tunnel permission profiles (`safe`, `balanced`,
   `full`, or `custom`) plus opt-in **Strict Roots**. The compatibility default
   remains `full` with existing machine roots until Strict Roots is enabled.
-- A scoped **Allow AI file deletion** setting can permit the `delete_file` tool
-  inside the active workspace boundary without broadly enabling destructive
-  shell commands.
+- **AI Destructive Actions** are opt-in per command family and default **OFF** on fresh installs. `delete_file`, Git delete/discard commands, direct shell delete commands, and WSL delete commands can be enabled independently, but scoped auto-approval is always restricted to the Active Project/workspace boundary. Critical-file protection and recoverable `delete_file` remain enabled by default.
 - Checkpoint file payloads are encrypted at rest with AES-256-GCM. The local
   encryption key is protected with Windows DPAPI, and legacy plaintext
   checkpoint rows are upgraded to ciphertext as the encrypted repository starts.
@@ -209,7 +225,7 @@ Current v4 highlights include:
 Authoritative in-repository references:
 
 - [Tool contract](docs/architecture/TOOL_CONTRACT.md) — core primitive schemas,
-  policy classes, and compatibility rules; the 213-tool configurable index below comes from the live runtime registry.
+  policy classes, and compatibility rules; the 214-tool configurable index below comes from the live runtime registry.
 - [Upgrade architecture](docs/architecture/UPGRADE_ARCHITECTURE.md) — v4 runtime
   architecture and additive gateway design.
 - [Roadmap phase status](docs/architecture/ROADMAP_PHASE_STATUS.md) — completed
@@ -274,7 +290,7 @@ stops the current local HTTP listener.
 
 1. Download the latest published installer from
    [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest).
-   The current release is `lnwjud-Setup-4.8.5.exe`.
+   The Windows installer for the current version is `lnwjud-Setup-4.9.1.exe`; download the published artifact from GitHub Releases.
 2. Run the NSIS installer and launch **lnwjud Agent Control Center**.
 3. Add or select the project/workspace you want lnwjud to operate on.
 4. Review **Settings** before attaching an AI client, especially Permission
@@ -353,7 +369,7 @@ The stable flow is:
 3. Enter a name/description, choose **Tunnel** under Connection, and select the
    associated `lnwjud` tunnel or enter its `tunnel_id`.
 4. Create the connection and review the discovered tools and metadata.
-5. Confirm that the default runtime exposes **207 tools** (or **213** when Codex delegation is explicitly enabled) and run a read-only
+5. Confirm that the default runtime exposes **208 tools** (or **214** when Codex delegation is explicitly enabled) and run a read-only
    smoke test before trying writes.
 
 Example smoke test:
@@ -431,7 +447,7 @@ lnwjud-mcp-stdio.cmd --workspace D:\\projects\\my-app --profile safe --strict-ro
 
 Supported profiles are `safe`, `balanced`, `full`, and `custom`. Equivalent environment variables are `LNWJUD_STDIO_PROFILE`, `LNWJUD_STRICT_ROOTS`, and semicolon-separated `LNWJUD_ALLOWED_ROOTS`. Desktop Settings stores the same policy for OpenAI Secure MCP Tunnel launches. In strict-root mode lnwjud skips automatic whole-drive registration and exposes only explicitly allowed canonical roots; absolute paths outside those roots fail closed. Existing realpath/reparse-point and secret-policy checks still apply. Strict roots are a filesystem/capability boundary, not an OS sandbox: spawned programs still run under the Windows user token.
 
-The **AI File Delete Policy** in Desktop Settings is separate. When enabled, only the scoped `delete_file` MCP tool may delete a file or empty directory inside an allowed workspace without per-call confirmation. It does not bypass workspace-root protection and does not automatically authorize arbitrary `rm`, `del`, or `Remove-Item` shell commands.
+The **AI Destructive Actions** policy in Desktop Settings is separate from the normal permission profile. Every destructive auto-approval toggle defaults **OFF** on fresh installs. Users can opt in independently to scoped `delete_file`, `git rm`, `git clean`, `git reset / restore`, direct `rm / unlink`, `rmdir / rd`, `del / erase`, and the corresponding WSL delete families. Auto-approval never bypasses the Active Project/workspace boundary; targets that escape the project, use unsafe broad patterns, or cannot be proven safe fall back to explicit chat confirmation. **Protected Critical Files** and recoverable `delete_file` are enabled by default, so protected manifests/secrets/recovery metadata are not auto-approved and supported deletes are checkpointed/moved to Recovery Trash for restoration.
 
 ## Requirements and optional integrations
 
@@ -520,7 +536,7 @@ corepack pnpm@10.15.0 package:windows
 The x64 NSIS installer is written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.8.5.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.9.1.exe
 ```
 
 The installer is per-user by default. A common installed executable path is:
@@ -869,9 +885,9 @@ For workspace <workspace-id>, show the project snapshot, Git status, and the top
 
 After changing tool metadata or restarting the tunnel, refresh the connector and continue in the same chat. Start a new chat only if Refresh connector does not clear a stale schema.
 
-## Complete MCP tool catalog (213 configurable tools; 207 advertised by default)
+## Complete MCP tool catalog (214 configurable tools; 208 advertised by default)
 
-This index is generated from the current v4.8.5 `ToolRegistry`, not copied from an older release document. Optional/planned tools still appear in the advertised contract and report their availability/requirements at runtime where applicable.
+This index is generated from the current v4.9.1 `ToolRegistry`, not copied from an older release document. Optional/planned tools still appear in the advertised contract and report their availability/requirements at runtime where applicable.
 
 | # | Tool | Permission | Runtime description |
 | ---: | --- | --- | --- |
@@ -1560,6 +1576,14 @@ Git commit author metadata is public in a public repository. Contributors who do
 not want to publish a personal email address should configure a GitHub-provided
 `users.noreply.github.com` address before committing.
 
+## Community and contribution
+
+- [Contributing guide](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security Policy](SECURITY.md)
+- [Issue tracker](https://github.com/engasnm111/lnwjud/issues)
+
+Please use the security policy instead of public issues for vulnerability details.
 ## Development and verification
 
 ```powershell

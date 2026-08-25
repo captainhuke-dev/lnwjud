@@ -11,8 +11,11 @@ import {
   type AddWorkspaceRequest,
   type BackupSummary,
   type ClearLogBufferRequest,
+  type ClearWorkLogRequest,
   type ConfigureTunnelProfileRequest,
+  type DeleteWorkspaceRequest,
   type DashboardSnapshot,
+  type DestructiveDeletePolicy,
   type DoctorReport,
   type ExportLogsRequest,
   type IpcResponseMap,
@@ -24,6 +27,7 @@ import {
   type SaveTunnelApiKeyRequest,
   type ScheduleRestoreBackupRequest,
   type SelectWorkspaceRequest,
+  type SetWorkspaceArchivedRequest,
   type SetAiDeletePolicyRequest,
   type SetLocaleRequest,
   type SetPermissionProfileRequest,
@@ -60,10 +64,12 @@ export interface DesktopIpcServices {
   listWorkspaces(): Promise<IpcResponseMap[typeof ipcChannels.listWorkspaces]>;
   addWorkspace(request: AddWorkspaceRequest): Promise<WorkspaceSummary>;
   selectWorkspace(request: SelectWorkspaceRequest): Promise<WorkspaceSummary>;
+  setWorkspaceArchived(request: SetWorkspaceArchivedRequest): Promise<WorkspaceSummary>;
+  deleteWorkspace(request: DeleteWorkspaceRequest): Promise<{ readonly deleted: boolean; readonly workspaceId: string; readonly rootPath: string }>;
   getDashboard(): Promise<DashboardSnapshot>;
   setPermissionProfile(request: SetPermissionProfileRequest): Promise<{ readonly profile: PermissionProfileName }>;
   setUnrestrictedMode(request: SetUnrestrictedModeRequest): Promise<{ readonly unrestricted: boolean; readonly restartRequired: boolean }>;
-  setAiDeletePolicy(request: SetAiDeletePolicyRequest): Promise<{ readonly enabled: boolean }>;
+  setAiDeletePolicy(request: SetAiDeletePolicyRequest): Promise<{ readonly enabled: boolean; readonly policy: DestructiveDeletePolicy }>;
   setStdioPolicy(request: SetStdioPolicyRequest): Promise<{ readonly profile: PermissionProfileName; readonly strictRoots: boolean; readonly allowedRoots: readonly string[]; readonly restartRequired: boolean }>;
   createBackup(): Promise<BackupSummary>;
   scheduleRestoreBackup(request: ScheduleRestoreBackupRequest): Promise<{ readonly scheduled: boolean; readonly restartRequired: boolean }>;
@@ -73,7 +79,7 @@ export interface DesktopIpcServices {
   startMcp(request: StartMcpRequest): Promise<McpConnectionStatus>;
   stopMcp(): Promise<McpConnectionStatus>;
   restartMcp(): Promise<McpConnectionStatus>;
-  clearWorkLog(): Promise<{ readonly cleared: boolean }>;
+  clearWorkLog(request?: ClearWorkLogRequest): Promise<{ readonly cleared: boolean }>;
   saveTunnelApiKey(request: SaveTunnelApiKeyRequest): Promise<{ readonly saved: boolean }>;
   startTunnel(): Promise<TunnelStatus>;
   stopTunnel(): Promise<TunnelStatus>;
@@ -95,6 +101,12 @@ export interface DesktopIpcHooks {
   readonly onLocaleChanged?: (locale: UiLocale) => void;
   readonly onUserSettingsChanged?: (settings: UserSettings) => void;
 }
+
+const defaultDestructiveDeletePolicy: DestructiveDeletePolicy = {
+  protectCriticalFiles: true,
+  recoverableDelete: true,
+  approvals: { delete_file: false, git_rm: false, git_clean: false, git_reset_restore: false, shell_rm_unlink: false, shell_rmdir: false, shell_del_erase: false, wsl_rm_unlink: false, wsl_rmdir: false },
+};
 
 const emptyTunnel: TunnelStatus = {
   state: 'stopped',
@@ -137,6 +149,12 @@ const defaultDesktopServices: DesktopIpcServices = {
   selectWorkspace: async (): Promise<WorkspaceSummary> => {
     throw new Error('Workspace service is not configured');
   },
+  setWorkspaceArchived: async (): Promise<WorkspaceSummary> => {
+    throw new Error('Workspace service is not configured');
+  },
+  deleteWorkspace: async (): Promise<{ readonly deleted: boolean; readonly workspaceId: string; readonly rootPath: string }> => {
+    throw new Error('Workspace service is not configured');
+  },
   getDashboard: async (): Promise<DashboardSnapshot> => ({
     selectedWorkspace: null,
     gitSummary: { branch: null, changedFiles: 0, stagedFiles: 0, message: 'No workspace selected' },
@@ -152,6 +170,11 @@ const defaultDesktopServices: DesktopIpcServices = {
     locale: 'th',
     unrestricted: false,
     allowAiDelete: false,
+    destructiveDeletePolicy: {
+      protectCriticalFiles: true,
+      recoverableDelete: true,
+      approvals: { delete_file: false, git_rm: false, git_clean: false, git_reset_restore: false, shell_rm_unlink: false, shell_rmdir: false, shell_del_erase: false, wsl_rm_unlink: false, wsl_rmdir: false },
+    },
     stdioPermissionProfile: 'full',
     stdioStrictRoots: false,
     stdioAllowedRoots: [],
@@ -168,7 +191,10 @@ const defaultDesktopServices: DesktopIpcServices = {
     unrestricted: request.enabled,
     restartRequired: false,
   }),
-  setAiDeletePolicy: async (request): Promise<{ readonly enabled: boolean }> => ({ enabled: request.enabled }),
+  setAiDeletePolicy: async (request): Promise<{ readonly enabled: boolean; readonly policy: DestructiveDeletePolicy }> => {
+    const policy = request.policy ?? { ...defaultDestructiveDeletePolicy, approvals: { ...defaultDestructiveDeletePolicy.approvals, delete_file: request.enabled === true } };
+    return { enabled: policy.approvals.delete_file, policy };
+  },
   setStdioPolicy: async (request): Promise<{ readonly profile: PermissionProfileName; readonly strictRoots: boolean; readonly allowedRoots: readonly string[]; readonly restartRequired: boolean }> => ({
     profile: request.profile, strictRoots: request.strictRoots, allowedRoots: request.allowedRoots, restartRequired: false,
   }),
@@ -248,6 +274,14 @@ export function registerIpcHandlers(
     assertTrustedSender(event, getMainWindow());
     return services.selectWorkspace(parseSelectWorkspaceRequest(payload));
   });
+  ipcMain.handle(ipcChannels.setWorkspaceArchived, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.setWorkspaceArchived(parseSetWorkspaceArchivedRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.deleteWorkspace, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.deleteWorkspace(parseDeleteWorkspaceRequest(payload));
+  });
   ipcMain.handle(ipcChannels.getDashboard, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
@@ -307,8 +341,7 @@ export function registerIpcHandlers(
   });
   ipcMain.handle(ipcChannels.clearWorkLog, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
-    assertNoPayload(payload);
-    return services.clearWorkLog();
+    return services.clearWorkLog(parseClearWorkLogRequest(payload));
   });
   ipcMain.handle(ipcChannels.saveTunnelApiKey, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
@@ -429,6 +462,16 @@ function parseSelectWorkspaceRequest(payload: unknown): SelectWorkspaceRequest {
   return { workspaceId: nonEmptyString(payload.workspaceId, 'workspaceId') };
 }
 
+function parseSetWorkspaceArchivedRequest(payload: unknown): SetWorkspaceArchivedRequest {
+  if (!isRecord(payload) || typeof payload.archived !== 'boolean') throw new Error('Invalid IPC payload: archived');
+  return { workspaceId: nonEmptyString(payload.workspaceId, 'workspaceId'), archived: payload.archived };
+}
+
+function parseDeleteWorkspaceRequest(payload: unknown): DeleteWorkspaceRequest {
+  if (!isRecord(payload)) throw new Error('Invalid IPC payload');
+  return { workspaceId: nonEmptyString(payload.workspaceId, 'workspaceId') };
+}
+
 function parseSetPermissionProfileRequest(payload: unknown): SetPermissionProfileRequest {
   if (!isRecord(payload) || !isPermissionProfile(payload.profile)) throw new Error('Invalid IPC payload');
   return { profile: payload.profile };
@@ -440,8 +483,26 @@ function parseSetUnrestrictedModeRequest(payload: unknown): SetUnrestrictedModeR
 }
 
 function parseSetAiDeletePolicyRequest(payload: unknown): SetAiDeletePolicyRequest {
-  if (!isRecord(payload) || typeof payload.enabled !== 'boolean') throw new Error('Invalid IPC payload: enabled');
-  return { enabled: payload.enabled };
+  if (!isRecord(payload)) throw new Error('Invalid IPC payload: destructive delete policy');
+  const enabled = typeof payload.enabled === 'boolean' ? payload.enabled : undefined;
+  const policy = payload.policy === undefined ? undefined : parseDestructiveDeletePolicy(payload.policy);
+  if (enabled === undefined && policy === undefined) throw new Error('Invalid IPC payload: destructive delete policy');
+  return { ...(enabled === undefined ? {} : { enabled }), ...(policy === undefined ? {} : { policy }) };
+}
+
+function parseDestructiveDeletePolicy(value: unknown): DestructiveDeletePolicy {
+  if (!isRecord(value) || typeof value.protectCriticalFiles !== 'boolean' || typeof value.recoverableDelete !== 'boolean') {
+    throw new Error('Invalid destructive delete policy');
+  }
+  const approvalsRaw = value.approvals;
+  if (!isRecord(approvalsRaw)) throw new Error('Invalid destructive delete policy');
+  const keys = ['delete_file', 'git_rm', 'git_clean', 'git_reset_restore', 'shell_rm_unlink', 'shell_rmdir', 'shell_del_erase', 'wsl_rm_unlink', 'wsl_rmdir'] as const;
+  const approvals = Object.fromEntries(keys.map((key) => {
+    const enabled = approvalsRaw[key];
+    if (typeof enabled !== 'boolean') throw new Error('Invalid destructive delete policy approval: ' + key);
+    return [key, enabled];
+  })) as Record<(typeof keys)[number], boolean>;
+  return { protectCriticalFiles: value.protectCriticalFiles, recoverableDelete: value.recoverableDelete, approvals };
 }
 
 function parseScheduleRestoreBackupRequest(payload: unknown): ScheduleRestoreBackupRequest {
@@ -458,19 +519,39 @@ function parseSetStdioPolicyRequest(payload: unknown): SetStdioPolicyRequest {
   return { profile: payload.profile, strictRoots: payload.strictRoots, allowedRoots };
 }
 
+function parseClearWorkLogRequest(payload: unknown): ClearWorkLogRequest {
+  if (payload === undefined) return {};
+  if (!isRecord(payload)) throw new Error('Invalid IPC payload');
+  const workspaceId = optionalScopeId(payload.workspaceId, 'workspaceId');
+  const sessionId = optionalScopeId(payload.sessionId, 'sessionId');
+  return { ...(workspaceId === undefined ? {} : { workspaceId }), ...(sessionId === undefined ? {} : { sessionId }) };
+}
+
 function parseClearLogBufferRequest(payload: unknown): ClearLogBufferRequest {
   if (!isRecord(payload) || !isLogSource(payload.source)) throw new Error('Invalid IPC payload: source');
-  return { source: payload.source };
+  const workspaceId = optionalScopeId(payload.workspaceId, 'workspaceId');
+  const sessionId = optionalScopeId(payload.sessionId, 'sessionId');
+  return { source: payload.source, ...(workspaceId === undefined ? {} : { workspaceId }), ...(sessionId === undefined ? {} : { sessionId }) };
 }
 
 function parseExportLogsRequest(payload: unknown): ExportLogsRequest {
   if (!isRecord(payload) || !isLogSource(payload.source)) {
     throw new Error('Invalid IPC payload');
   }
+  const workspaceId = optionalScopeId(payload.workspaceId, 'workspaceId');
+  const sessionId = optionalScopeId(payload.sessionId, 'sessionId');
   return {
     source: payload.source,
     filePath: typeof payload.filePath === 'string' ? payload.filePath : '',
+    ...(workspaceId === undefined ? {} : { workspaceId }),
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ...(typeof payload.query === 'string' && payload.query.trim().length > 0 ? { query: payload.query.trim().slice(0, 512) } : {}),
   };
+}
+
+function optionalScopeId(value: unknown, key: string): string | undefined {
+  if (value === undefined) return undefined;
+  return nonEmptyString(value, key).trim();
 }
 
 function isLogSource(value: unknown): value is 'tunnel' | 'mcp' | 'process' {
@@ -492,8 +573,13 @@ async function exportLogsToFile(
     return { exported: false };
   }
   const snapshot = await services.getLogSnapshot();
+  const query = request.query?.toLowerCase() ?? '';
   const content = snapshot.lines
     .filter((line) => line.source === request.source)
+    .filter((line) => request.workspaceId === undefined || line.workspaceId === request.workspaceId)
+    .filter((line) => request.sessionId === undefined || line.sessionId === request.sessionId)
+    .filter((line) => query.length === 0 || line.text.toLowerCase().includes(query))
+    .sort((left, right) => right.id - left.id)
     .map((line) => `[${line.timestamp}] [${line.level.toUpperCase()}] ${line.text}`)
     .join('\r\n');
   await atomicWrite(result.filePath, content.length === 0 ? '' : `${content}\r\n`);
@@ -882,6 +968,7 @@ function bootstrapMcpStdio(): void {
       services: runtime.mcpServices,
       actor: runtime.mcpActor,
       activityTracker: runtime.activityTracker,
+      destructivePolicyProvider: () => runtime.getDestructivePolicy(),
       codexToolsEnabled: runtime.getUserSettings().codexToolsEnabled,
       onError: (error): void => {
         if (/EPIPE|ECONNRESET|broken pipe/i.test(error.message)) {
@@ -966,7 +1053,7 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
       sharedActivitySnapshot: async (): Promise<UpdateSharedActivitySnapshot> => {
         const snapshot = await readSharedActivitySnapshot({ profileDirectory: path.join(process.env.APPDATA ?? app.getPath('appData'), 'tunnel-client') });
         return snapshot.state === 'available'
-          ? { state: 'available', activeCallCount: snapshot.activeCount, revision: snapshot.revision, ownerKey: `${snapshot.owner.pid}:${snapshot.owner.processStartedAt}` }
+          ? { state: 'available', activeCallCount: snapshot.activeCount, revision: snapshot.revision, ownerKey: snapshot.ownerKey }
           : { state: snapshot.state, reason: snapshot.reason };
       },
       install: (): void => {
