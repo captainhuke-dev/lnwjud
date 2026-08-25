@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { appError, err, ok } from '@lnwjud/domain';
 import { permissionProfiles } from '@lnwjud/permissions';
+import { DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
 import type { ActivitySinkEvent } from './activity-tracker.js';
-import { ToolRegistry, type McpApplicationServices } from './tool-registry.js';
+import { ToolRegistry, type McpApplicationServices, type WorkspaceScope } from './tool-registry.js';
 import { CODEX_TOOL_NAMES } from './tools/codex-tools.js';
 import { UPGRADE_TOOL_CATALOG } from './upgrade-catalog.js';
 
@@ -19,7 +20,7 @@ describe('MCP tool registry', () => {
     expect(registry.list().map((tool) => tool.name)).toEqual([
       'workspace_list', 'workspace_register', 'workspace_info', 'workspace_tree', 'project_snapshot', 'read_file', 'read_files',
       'search_files', 'search_text', 'git_status', 'git_diff', 'git_log', 'git', 'write_file',
-      'apply_patch', 'move_file', 'copy_file', 'delete_file', 'process_start', 'process_list', 'process_status',
+      'apply_patch', 'move_file', 'copy_file', 'delete_file', 'restore_deleted_file', 'process_start', 'process_list', 'process_status',
       'process_logs', 'process_stop', 'project_dev', 'project_test', 'project_lint',
       'project_typecheck', 'project_build', 'shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'vision_annotated_capture', 'ui_target_action', 'window', 'health',
       'system_info', 'notification', 'file_dialog', 'clipboard', 'web_fetch',
@@ -324,6 +325,47 @@ describe('MCP tool registry', () => {
     ]);
   });
 
+  it('attributes shell cwd and task follow-ups to the matching registered workspace for activity logs', async () => {
+    const events: ActivitySinkEvent[] = [];
+    let taskSequence = 0;
+    const registry = new ToolRegistry({
+      workspaceInfo: {
+        async info(): Promise<ReturnType<typeof err>> { return err(appError('WORKSPACE_NOT_FOUND', 'not used')); },
+        async list(): Promise<ReturnType<typeof ok>> {
+          return ok([
+            { id: 'machine-root', displayName: 'E', rootPath: 'E:\\', realRootPath: 'E:\\' },
+            { id: 'workspace-project', displayName: 'lnwjud', rootPath: 'E:\\lnwjud', realRootPath: 'E:\\lnwjud' },
+          ]);
+        },
+      },
+      capabilities: {
+        async execute(tool, input): Promise<ReturnType<typeof ok>> {
+          expect(tool).toBe('shell');
+          const request = input as { operation?: string; task_id?: string };
+          if (request.operation === 'run') {
+            taskSequence += 1;
+            return ok({ task_id: `task-${taskSequence}`, state: 'running' });
+          }
+          return ok({ task_id: request.task_id, state: 'completed', exit_code: 0 });
+        },
+      },
+    }, actor, {
+      activity: { async record(event: ActivitySinkEvent): Promise<void> { events.push(event); } },
+    });
+
+    await registry.invoke('shell', { operation: 'run', executable: 'node', arguments: ['--version'], cwd: 'E:\\lnwjud\\packages\\mcp-server' });
+    await registry.invoke('shell', { operation: 'wait', task_id: 'task-1' });
+    await registry.invoke('shell', { operation: 'run', executable: 'node', arguments: ['--version'], cwd: 'C:\\outside' });
+
+    expect(events.slice(0, 4).map((event) => ({ phase: event.phase, workspaceId: event.workspaceId }))).toEqual([
+      { phase: 'started', workspaceId: 'workspace-project' },
+      { phase: 'completed', workspaceId: 'workspace-project' },
+      { phase: 'started', workspaceId: 'workspace-project' },
+      { phase: 'completed', workspaceId: 'workspace-project' },
+    ]);
+    expect(events.slice(4).every((event) => event.workspaceId === undefined)).toBe(true);
+  });
+
   it('executes tool_batch children through the registry and records each child activity', async () => {
     const events: Array<{ phase: string; toolName: string; resultCode: string }> = [];
     const registry = new ToolRegistry({
@@ -415,7 +457,12 @@ describe('MCP tool registry', () => {
       capabilities: {
         async execute(): Promise<ReturnType<typeof ok>> { return ok({ ok: true }); },
       },
-    }, actor, { allowAiDeleteProvider: (): boolean => true });
+    }, actor, {
+      allowAiDeleteProvider: (): boolean => true,
+      workspaceScopeResolver: async (workspaceId): Promise<WorkspaceScope | null> => workspaceId === 'workspace-1'
+        ? { workspaceId, rootPath: 'E:\\project' }
+        : null,
+    });
 
     const deleted = await registry.invoke('delete_file', { workspaceId: 'workspace-1', path: 'tmp.txt' });
     expect(deleted.isError).not.toBe(true);
@@ -424,6 +471,84 @@ describe('MCP tool registry', () => {
       .resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
   });
 
+  it('auto-approves only enabled destructive command families inside the active project', async () => {
+    const capabilityInputs: unknown[] = [];
+    let gitRuns = 0;
+    const registry = new ToolRegistry({
+      capabilities: {
+        async execute(_tool, input): Promise<ReturnType<typeof ok>> { capabilityInputs.push(input); return ok({ ok: true }); },
+      },
+      git: {
+        async run(): Promise<ReturnType<typeof ok>> { gitRuns += 1; return ok({ exitCode: 0, stdout: '', stderr: '' }); },
+      } as McpApplicationServices['git'],
+    }, actor, {
+      destructivePolicyProvider: (): DestructiveAutoApprovalPolicy => ({
+        ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY,
+        approvals: {
+          ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY.approvals,
+          git_rm: true,
+          shell_rm_unlink: true,
+        },
+      }),
+      workspaceScopeResolver: async (workspaceId): Promise<WorkspaceScope | null> => workspaceId === 'workspace-1'
+        ? { workspaceId, rootPath: 'E:\\project' }
+        : null,
+    });
+
+    const gitRm = await registry.invoke('git', { workspaceId: 'workspace-1', args: ['rm', '--', 'src/old.ts'] });
+    expect(gitRm.isError).not.toBe(true);
+    expect(gitRuns).toBe(1);
+
+    const shellRm = await registry.invoke('shell', { workspaceId: 'workspace-1', operation: 'run', executable: 'rm', arguments: ['src/old.tmp'] });
+    expect(shellRm.isError).not.toBe(true);
+    expect(capabilityInputs).toHaveLength(1);
+    expect(capabilityInputs[0]).toMatchObject({ userConfirmed: true });
+
+    await expect(registry.invoke('shell', { workspaceId: 'workspace-1', operation: 'run', executable: 'rm', arguments: ['..\\outside.tmp'] }))
+      .resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    await expect(registry.invoke('git', { workspaceId: 'workspace-1', args: ['clean', '-fd'] }))
+      .resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+  });
+
+  it('resolves destructive scope from each call workspaceId and fails closed when scope is missing or crossed', async () => {
+    let deletes = 0;
+    const roots = new Map([
+      ['workspace-a', 'E:\\project-a'],
+      ['workspace-b', 'F:\\project-b'],
+    ]);
+    const registry = new ToolRegistry({
+      workspaceInfo: {
+        async info(_actor, workspaceId): Promise<ReturnType<typeof ok> | ReturnType<typeof err>> {
+          const rootPath = roots.get(workspaceId);
+          return rootPath === undefined
+            ? err(appError('WORKSPACE_NOT_FOUND', 'Workspace was not found'))
+            : ok({ id: workspaceId, rootPath, realRootPath: rootPath });
+        },
+      },
+      file: {
+        async deleteFile(): Promise<ReturnType<typeof ok>> { deletes += 1; return ok(undefined); },
+      } as McpApplicationServices['file'],
+    }, actor, {
+      destructivePolicyProvider: (): DestructiveAutoApprovalPolicy => ({
+        ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY,
+        approvals: { ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY.approvals, delete_file: true },
+      }),
+    });
+
+    const [deletedA, deletedB] = await Promise.all([
+      registry.invoke('delete_file', { workspaceId: 'workspace-a', path: 'tmp-a.txt' }),
+      registry.invoke('delete_file', { workspaceId: 'workspace-b', path: 'tmp-b.txt' }),
+    ]);
+    expect(deletedA.isError).not.toBe(true);
+    expect(deletedB.isError).not.toBe(true);
+    expect(deletes).toBe(2);
+
+    await expect(registry.invoke('delete_file', { workspaceId: 'workspace-a', path: 'F:\\project-b\\cross.txt' }))
+      .resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    await expect(registry.invoke('delete_file', { path: 'no-workspace.txt' }))
+      .resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    expect(deletes).toBe(2);
+  });
   it('allows non-destructive git commands without confirmation', async () => {
     let executed = 0;
     const registry = new ToolRegistry({

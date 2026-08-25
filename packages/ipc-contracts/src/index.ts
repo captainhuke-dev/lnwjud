@@ -1,10 +1,12 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '4.8.5';
+export const APP_VERSION = '4.9.1';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
   addWorkspace: 'lnwjud:add-workspace',
   selectWorkspace: 'lnwjud:select-workspace',
+  setWorkspaceArchived: 'lnwjud:set-workspace-archived',
+  deleteWorkspace: 'lnwjud:delete-workspace',
   getDashboard: 'lnwjud:get-dashboard',
   setPermissionProfile: 'lnwjud:set-permission-profile',
   setUnrestrictedMode: 'lnwjud:set-unrestricted-mode',
@@ -47,6 +49,21 @@ export const pushChannels = {
 
 export type IpcChannel = typeof ipcChannels[keyof typeof ipcChannels];
 export type PermissionProfileName = 'safe' | 'balanced' | 'full' | 'custom';
+export type DestructiveApprovalKey =
+  | 'delete_file'
+  | 'git_rm'
+  | 'git_clean'
+  | 'git_reset_restore'
+  | 'shell_rm_unlink'
+  | 'shell_rmdir'
+  | 'shell_del_erase'
+  | 'wsl_rm_unlink'
+  | 'wsl_rmdir';
+export interface DestructiveDeletePolicy {
+  readonly protectCriticalFiles: boolean;
+  readonly recoverableDelete: boolean;
+  readonly approvals: Readonly<Record<DestructiveApprovalKey, boolean>>;
+}
 export type UiLocale = 'th' | 'en';
 export type AgentState = 'stopped' | 'idle' | 'busy';
 export type TunnelRunState = 'stopped' | 'starting' | 'running' | 'error';
@@ -125,6 +142,8 @@ export interface WorkspaceSummary {
   readonly rootPath: string;
   readonly realRootPath: string;
   readonly createdAt: string;
+  readonly archivedAt?: string | null;
+  readonly kind?: 'project' | 'machine_root';
 }
 
 export type CapabilityToolName = 'shell' | 'dom_cdp' | 'accessibility' | 'input_event' | 'vision' | 'window' | 'health' | 'system_info' | 'notification' | 'file_dialog' | 'clipboard' | 'web_fetch' | 'audio' | 'screen_record' | 'office' | 'scheduler' | 'wsl_exec' | 'wsl_fs';
@@ -147,6 +166,7 @@ export interface WorkLogEntry {
   readonly targetSummary: string | null;
   readonly durationMs: number;
   readonly workspaceId: string | null;
+  readonly sessionId: string | null;
   readonly callId?: string;
 }
 
@@ -156,6 +176,7 @@ export interface InFlightWorkItem {
   readonly startedAt: string;
   readonly targetSummary: string | null;
   readonly workspaceId: string | null;
+  readonly sessionId: string | null;
 }
 
 export interface ConnectionModes {
@@ -183,6 +204,8 @@ export interface LogLine {
   readonly timestamp: string;
   readonly level: LogLevel;
   readonly text: string;
+  readonly workspaceId: string | null;
+  readonly sessionId: string | null;
   readonly correlation?: LogCorrelation;
 }
 
@@ -198,13 +221,21 @@ export interface LogSnapshot {
   readonly tunnelLogExists: boolean;
 }
 
-export interface ClearLogBufferRequest {
+export interface LogScopeRequest {
+  readonly workspaceId?: string;
+  readonly sessionId?: string;
+}
+
+export type ClearWorkLogRequest = LogScopeRequest;
+
+export interface ClearLogBufferRequest extends LogScopeRequest {
   readonly source: LogSource;
 }
 
-export interface ExportLogsRequest {
+export interface ExportLogsRequest extends LogScopeRequest {
   readonly source: LogSource;
   readonly filePath: string;
+  readonly query?: string;
 }
 
 export type IncidentClassification = 'local_tool_failed' | 'tunnel_disconnected' | 'remote_turn_stopped' | 'healthy_or_inconclusive';
@@ -260,8 +291,9 @@ export interface DashboardSnapshot {
   readonly mode: 'WORK';
   readonly locale: UiLocale;
   readonly unrestricted: boolean;
-  /** When true, the scoped delete_file tool may delete within its workspace without per-call chat confirmation. */
+  /** Legacy alias for destructiveDeletePolicy.approvals.delete_file. */
   readonly allowAiDelete: boolean;
+  readonly destructiveDeletePolicy: DestructiveDeletePolicy;
   readonly stdioPermissionProfile: PermissionProfileName;
   readonly stdioStrictRoots: boolean;
   readonly stdioAllowedRoots: readonly string[];
@@ -284,6 +316,7 @@ export interface AuditEventSummary {
 export interface ProcessSummary {
   readonly id: string;
   readonly workspaceId: string;
+  readonly sessionId: string | null;
   readonly executable: string;
   readonly args: readonly string[];
   readonly state: 'starting' | 'running' | 'exited' | 'failed' | 'stopped' | 'timed_out' | 'termination_unverified';
@@ -312,6 +345,15 @@ export interface SelectWorkspaceRequest {
   readonly workspaceId: string;
 }
 
+export interface SetWorkspaceArchivedRequest {
+  readonly workspaceId: string;
+  readonly archived: boolean;
+}
+
+export interface DeleteWorkspaceRequest {
+  readonly workspaceId: string;
+}
+
 export interface SetPermissionProfileRequest {
   readonly profile: PermissionProfileName;
 }
@@ -321,7 +363,10 @@ export interface SetUnrestrictedModeRequest {
 }
 
 export interface SetAiDeletePolicyRequest {
-  readonly enabled: boolean;
+  /** Legacy single-toggle compatibility. */
+  readonly enabled?: boolean;
+  /** Preferred fine-grained destructive auto-approval policy. */
+  readonly policy?: DestructiveDeletePolicy;
 }
 
 export interface SetStdioPolicyRequest {
@@ -383,6 +428,8 @@ export interface IpcRequestMap {
   readonly [ipcChannels.listWorkspaces]: undefined;
   readonly [ipcChannels.addWorkspace]: AddWorkspaceRequest;
   readonly [ipcChannels.selectWorkspace]: SelectWorkspaceRequest;
+  readonly [ipcChannels.setWorkspaceArchived]: SetWorkspaceArchivedRequest;
+  readonly [ipcChannels.deleteWorkspace]: DeleteWorkspaceRequest;
   readonly [ipcChannels.getDashboard]: undefined;
   readonly [ipcChannels.setPermissionProfile]: SetPermissionProfileRequest;
   readonly [ipcChannels.setUnrestrictedMode]: SetUnrestrictedModeRequest;
@@ -396,7 +443,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.startMcp]: StartMcpRequest;
   readonly [ipcChannels.stopMcp]: undefined;
   readonly [ipcChannels.restartMcp]: undefined;
-  readonly [ipcChannels.clearWorkLog]: undefined;
+  readonly [ipcChannels.clearWorkLog]: ClearWorkLogRequest | undefined;
   readonly [ipcChannels.saveTunnelApiKey]: SaveTunnelApiKeyRequest;
   readonly [ipcChannels.startTunnel]: undefined;
   readonly [ipcChannels.stopTunnel]: undefined;
@@ -422,10 +469,12 @@ export interface IpcResponseMap {
   readonly [ipcChannels.listWorkspaces]: readonly WorkspaceSummary[];
   readonly [ipcChannels.addWorkspace]: WorkspaceSummary;
   readonly [ipcChannels.selectWorkspace]: WorkspaceSummary;
+  readonly [ipcChannels.setWorkspaceArchived]: WorkspaceSummary;
+  readonly [ipcChannels.deleteWorkspace]: { readonly deleted: boolean; readonly workspaceId: string; readonly rootPath: string };
   readonly [ipcChannels.getDashboard]: DashboardSnapshot;
   readonly [ipcChannels.setPermissionProfile]: { readonly profile: PermissionProfileName };
   readonly [ipcChannels.setUnrestrictedMode]: { readonly unrestricted: boolean; readonly restartRequired: boolean };
-  readonly [ipcChannels.setAiDeletePolicy]: { readonly enabled: boolean };
+  readonly [ipcChannels.setAiDeletePolicy]: { readonly enabled: boolean; readonly policy: DestructiveDeletePolicy };
   readonly [ipcChannels.setStdioPolicy]: { readonly profile: PermissionProfileName; readonly strictRoots: boolean; readonly allowedRoots: readonly string[]; readonly restartRequired: boolean };
   readonly [ipcChannels.createBackup]: BackupSummary;
   readonly [ipcChannels.scheduleRestoreBackup]: { readonly scheduled: boolean; readonly restartRequired: boolean };
@@ -461,6 +510,8 @@ export interface LnwjudApi {
   listWorkspaces(): Promise<IpcResponseMap[typeof ipcChannels.listWorkspaces]>;
   addWorkspace(request: AddWorkspaceRequest): Promise<IpcResponseMap[typeof ipcChannels.addWorkspace]>;
   selectWorkspace(request: SelectWorkspaceRequest): Promise<IpcResponseMap[typeof ipcChannels.selectWorkspace]>;
+  setWorkspaceArchived(request: SetWorkspaceArchivedRequest): Promise<IpcResponseMap[typeof ipcChannels.setWorkspaceArchived]>;
+  deleteWorkspace(request: DeleteWorkspaceRequest): Promise<IpcResponseMap[typeof ipcChannels.deleteWorkspace]>;
   getDashboard(): Promise<IpcResponseMap[typeof ipcChannels.getDashboard]>;
   setPermissionProfile(request: SetPermissionProfileRequest): Promise<IpcResponseMap[typeof ipcChannels.setPermissionProfile]>;
   setUnrestrictedMode(request: SetUnrestrictedModeRequest): Promise<IpcResponseMap[typeof ipcChannels.setUnrestrictedMode]>;
@@ -474,7 +525,7 @@ export interface LnwjudApi {
   startMcp(request: StartMcpRequest): Promise<IpcResponseMap[typeof ipcChannels.startMcp]>;
   stopMcp(): Promise<IpcResponseMap[typeof ipcChannels.stopMcp]>;
   restartMcp(): Promise<IpcResponseMap[typeof ipcChannels.restartMcp]>;
-  clearWorkLog(): Promise<IpcResponseMap[typeof ipcChannels.clearWorkLog]>;
+  clearWorkLog(request?: ClearWorkLogRequest): Promise<IpcResponseMap[typeof ipcChannels.clearWorkLog]>;
   saveTunnelApiKey(request: SaveTunnelApiKeyRequest): Promise<IpcResponseMap[typeof ipcChannels.saveTunnelApiKey]>;
   startTunnel(): Promise<IpcResponseMap[typeof ipcChannels.startTunnel]>;
   stopTunnel(): Promise<IpcResponseMap[typeof ipcChannels.stopTunnel]>;

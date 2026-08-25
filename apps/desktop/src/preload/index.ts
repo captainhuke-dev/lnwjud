@@ -6,8 +6,11 @@ import {
   type AgentState,
   type BackupSummary,
   type ClearLogBufferRequest,
+  type ClearWorkLogRequest,
   type ConfigureTunnelProfileRequest,
+  type DeleteWorkspaceRequest,
   type DashboardSnapshot,
+  type DestructiveDeletePolicy,
   type DoctorCheck,
   type DoctorReport,
   type ExportLogsRequest,
@@ -23,6 +26,7 @@ import {
   type SaveTunnelApiKeyRequest,
   type ScheduleRestoreBackupRequest,
   type SelectWorkspaceRequest,
+  type SetWorkspaceArchivedRequest,
   type SetAiDeletePolicyRequest,
   type SetLocaleRequest,
   type SetPermissionProfileRequest,
@@ -76,12 +80,17 @@ function nullableString(value: unknown): string | null {
 
 function workspaceSummary(value: unknown): WorkspaceSummary {
   if (!isRecord(value)) throw new Error('Invalid IPC response');
+  const archivedAt = value.archivedAt === undefined ? undefined : nullableString(value.archivedAt);
+  const kind = value.kind;
+  if (kind !== undefined && kind !== 'project' && kind !== 'machine_root') throw new Error('Invalid IPC response');
   return {
     id: stringField(value, 'id'),
     displayName: stringField(value, 'displayName'),
     rootPath: stringField(value, 'rootPath'),
     realRootPath: stringField(value, 'realRootPath'),
     createdAt: stringField(value, 'createdAt'),
+    ...(archivedAt === undefined ? {} : { archivedAt }),
+    ...(kind === undefined ? {} : { kind }),
   };
 }
 
@@ -126,6 +135,7 @@ function workLogEntries(value: unknown): readonly WorkLogEntry[] {
       targetSummary: nullableString(entry.targetSummary),
       durationMs: numberField(entry, 'durationMs'),
       workspaceId: nullableString(entry.workspaceId),
+      sessionId: nullableString(entry.sessionId),
     };
   });
 }
@@ -140,6 +150,7 @@ function inFlightItems(value: unknown): readonly InFlightWorkItem[] {
       startedAt: stringField(entry, 'startedAt'),
       targetSummary: nullableString(entry.targetSummary),
       workspaceId: nullableString(entry.workspaceId),
+      sessionId: nullableString(entry.sessionId),
     };
   });
 }
@@ -273,6 +284,7 @@ function dashboard(value: unknown): DashboardSnapshot {
     locale: uiLocale(value.locale),
     unrestricted: booleanField(value, 'unrestricted'),
     allowAiDelete: booleanField(value, 'allowAiDelete'),
+    destructiveDeletePolicy: destructiveDeletePolicy(value.destructiveDeletePolicy),
     stdioPermissionProfile: permissionProfile(value.stdioPermissionProfile),
     stdioStrictRoots: booleanField(value, 'stdioStrictRoots'),
     stdioAllowedRoots: stringList(value.stdioAllowedRoots),
@@ -378,6 +390,7 @@ function processSummary(value: unknown): ProcessSummary {
   return {
     id: stringField(value, 'id'),
     workspaceId: stringField(value, 'workspaceId'),
+    sessionId: nullableString(value.sessionId),
     executable: stringField(value, 'executable'),
     args: value.args,
     state,
@@ -429,6 +442,23 @@ function selectWorkspace(request: SelectWorkspaceRequest): Promise<WorkspaceSumm
   return invoke(ipcChannels.selectWorkspace, { workspaceId: request.workspaceId }).then(workspaceSummary);
 }
 
+function setWorkspaceArchived(request: SetWorkspaceArchivedRequest): Promise<WorkspaceSummary> {
+  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0 || typeof request.archived !== 'boolean') {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  return invoke(ipcChannels.setWorkspaceArchived, { workspaceId: request.workspaceId, archived: request.archived }).then(workspaceSummary);
+}
+
+function deleteWorkspace(request: DeleteWorkspaceRequest): Promise<{ readonly deleted: boolean; readonly workspaceId: string; readonly rootPath: string }> {
+  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0) {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  return invoke(ipcChannels.deleteWorkspace, { workspaceId: request.workspaceId }).then((value: unknown) => {
+    if (!isRecord(value)) throw new Error('Invalid IPC response');
+    return { deleted: booleanField(value, 'deleted'), workspaceId: stringField(value, 'workspaceId'), rootPath: stringField(value, 'rootPath') };
+  });
+}
+
 function setPermissionProfile(request: SetPermissionProfileRequest): Promise<{ readonly profile: PermissionProfileName }> {
   if (!isRecord(request)) return Promise.reject(new Error('Invalid IPC request'));
   const profile = permissionProfile(request.profile);
@@ -448,12 +478,27 @@ function setUnrestrictedMode(request: SetUnrestrictedModeRequest): Promise<{ rea
   });
 }
 
-function setAiDeletePolicy(request: SetAiDeletePolicyRequest): Promise<{ readonly enabled: boolean }> {
-  if (!isRecord(request) || typeof request.enabled !== 'boolean') return Promise.reject(new Error('Invalid IPC request'));
-  return invoke(ipcChannels.setAiDeletePolicy, { enabled: request.enabled }).then((value: unknown) => {
+function setAiDeletePolicy(request: SetAiDeletePolicyRequest): Promise<{ readonly enabled: boolean; readonly policy: DestructiveDeletePolicy }> {
+  if (!isRecord(request)) return Promise.reject(new Error('Invalid IPC request'));
+  const enabled = typeof request.enabled === 'boolean' ? request.enabled : undefined;
+  let policy: DestructiveDeletePolicy | undefined;
+  try { policy = request.policy === undefined ? undefined : destructiveDeletePolicy(request.policy); }
+  catch (error) { return Promise.reject(error); }
+  if (enabled === undefined && policy === undefined) return Promise.reject(new Error('Invalid IPC request'));
+  const payload = { ...(enabled === undefined ? {} : { enabled }), ...(policy === undefined ? {} : { policy }) };
+  return invoke(ipcChannels.setAiDeletePolicy, payload).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
-    return { enabled: booleanField(value, 'enabled') };
+    return { enabled: booleanField(value, 'enabled'), policy: destructiveDeletePolicy(value.policy) };
   });
+}
+
+function destructiveDeletePolicy(value: unknown): DestructiveDeletePolicy {
+  if (!isRecord(value) || typeof value.protectCriticalFiles !== 'boolean' || typeof value.recoverableDelete !== 'boolean') throw new Error('Invalid IPC response');
+  const approvalsRaw = value.approvals;
+  if (!isRecord(approvalsRaw)) throw new Error('Invalid IPC response');
+  const keys = ['delete_file', 'git_rm', 'git_clean', 'git_reset_restore', 'shell_rm_unlink', 'shell_rmdir', 'shell_del_erase', 'wsl_rm_unlink', 'wsl_rmdir'] as const;
+  const approvals = Object.fromEntries(keys.map((key) => [key, booleanField(approvalsRaw, key)])) as Record<(typeof keys)[number], boolean>;
+  return { protectCriticalFiles: value.protectCriticalFiles, recoverableDelete: value.recoverableDelete, approvals };
 }
 
 function setStdioPolicy(request: SetStdioPolicyRequest): Promise<{ readonly profile: PermissionProfileName; readonly strictRoots: boolean; readonly allowedRoots: readonly string[]; readonly restartRequired: boolean }> {
@@ -515,8 +560,10 @@ function restartMcp(): Promise<McpConnectionStatus> {
   return invoke(ipcChannels.restartMcp).then(mcpStatus);
 }
 
-function clearWorkLog(): Promise<{ readonly cleared: boolean }> {
-  return invoke(ipcChannels.clearWorkLog).then((value: unknown) => {
+function clearWorkLog(request: ClearWorkLogRequest = {}): Promise<{ readonly cleared: boolean }> {
+  if (!isRecord(request)) return Promise.reject(new Error('Invalid IPC request'));
+  const payload = scopePayload(request);
+  return invoke(ipcChannels.clearWorkLog, payload).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
     return { cleared: booleanField(value, 'cleared') };
   });
@@ -588,6 +635,8 @@ function logLine(value: unknown): LogLine {
     timestamp: stringField(value, 'timestamp'),
     level: value.level,
     text: stringField(value, 'text'),
+    workspaceId: nullableString(value.workspaceId),
+    sessionId: nullableString(value.sessionId),
     ...(correlation === undefined ? {} : { correlation }),
   };
 }
@@ -609,9 +658,15 @@ function isLogLevel(value: unknown): value is 'info' | 'warn' | 'error' {
   return value === 'info' || value === 'warn' || value === 'error';
 }
 
+function scopePayload(request: { readonly workspaceId?: string; readonly sessionId?: string }): { readonly workspaceId?: string; readonly sessionId?: string } {
+  const workspaceId = typeof request.workspaceId === 'string' && request.workspaceId.trim().length > 0 ? request.workspaceId.trim() : undefined;
+  const sessionId = typeof request.sessionId === 'string' && request.sessionId.trim().length > 0 ? request.sessionId.trim() : undefined;
+  return { ...(workspaceId === undefined ? {} : { workspaceId }), ...(sessionId === undefined ? {} : { sessionId }) };
+}
+
 function clearLogBuffer(request: ClearLogBufferRequest): Promise<{ readonly cleared: boolean }> {
   if (!isRecord(request) || !isLogSource(request.source)) return Promise.reject(new Error('Invalid IPC request'));
-  return invoke(ipcChannels.clearLogBuffer, { source: request.source }).then((value: unknown) => {
+  return invoke(ipcChannels.clearLogBuffer, { source: request.source, ...scopePayload(request) }).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
     return { cleared: booleanField(value, 'cleared') };
   });
@@ -621,7 +676,7 @@ function exportLogs(request: ExportLogsRequest): Promise<{ readonly exported: bo
   if (!isRecord(request) || !isLogSource(request.source)) {
     return Promise.reject(new Error('Invalid IPC request'));
   }
-  return invoke(ipcChannels.exportLogs, { source: request.source, filePath: request.filePath ?? '' }).then((value: unknown) => {
+  return invoke(ipcChannels.exportLogs, { source: request.source, filePath: request.filePath ?? '', ...scopePayload(request), ...(typeof request.query === 'string' && request.query.trim().length > 0 ? { query: request.query.trim().slice(0, 512) } : {}) }).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
     return { exported: booleanField(value, 'exported') };
   });
@@ -668,6 +723,8 @@ const api: LnwjudApi = {
   listWorkspaces: () => invoke(ipcChannels.listWorkspaces).then(workspaceList),
   addWorkspace,
   selectWorkspace,
+  setWorkspaceArchived,
+  deleteWorkspace,
   getDashboard: () => invoke(ipcChannels.getDashboard).then(dashboard),
   setPermissionProfile,
   setUnrestrictedMode,

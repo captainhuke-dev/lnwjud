@@ -63,9 +63,12 @@ describe('public repository hygiene', () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     expect(typeof rootPackage.version).toBe('string');
 
-    expect(readme).toContain(`## Current release: v${rootPackage.version as string}`);
-    expect(readme).toContain(`current published installer and runtime contract are \`v${rootPackage.version as string}\``);
-    expect(readme).toContain('213 configurable tools');
+    expect(readme).toContain(`## Current version: v${rootPackage.version as string}`);
+    expect(readme).toContain(`The v${rootPackage.version as string} release target and runtime contract`);
+    expect(readme).toContain(`The Windows installer for the current version is \`lnwjud-Setup-${rootPackage.version as string}.exe\``);
+    expect(readme).not.toContain('current source/release candidate is');
+    expect(readme).not.toContain('pending publication');
+    expect(readme).toContain('214 configurable tools');
     expect(readme).not.toContain(['Verify the ', '184-tool catalog'].join(''));
     expect(readme).not.toContain(['current v3.0.0 catalog contains ', '184 tools'].join(''));
     expect(readme).not.toContain('packaged v3.0.0 build');

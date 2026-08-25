@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
 import type {
   DashboardSnapshot,
+  DestructiveDeletePolicy,
   DoctorReport,
   LogLine,
   LogSource,
@@ -17,6 +18,7 @@ import { ProjectsPage } from './features/projects/ProjectsPage.js';
 import { GitPage } from './features/git/GitPage.js';
 import { WorkLogPage } from './features/worklog/WorkLogPage.js';
 import { LiveLogsPage } from './features/live/LiveLogsPage.js';
+import type { LogScopeSelection } from './features/live/LogStreamPanel.js';
 import { applyLogSnapshot } from './features/live/log-buffer.js';
 import { SettingsPage } from './features/settings/SettingsPage.js';
 import { DoctorPanel } from './features/doctor/DoctorPanel.js';
@@ -45,6 +47,7 @@ export function App(): ReactElement {
   const logIds = useRef<Set<number>>(new Set());
 
   const t = createTranslator(locale);
+  const activeWorkspaces = workspaces.filter((workspace) => workspace.archivedAt === undefined || workspace.archivedAt === null);
 
   const appendLogLine = useCallback((line: LogLine): void => {
     if (logIds.current.has(line.id)) return;
@@ -88,10 +91,14 @@ export function App(): ReactElement {
     };
   }, [appendLogLine]);
 
-  async function clearLogSource(source: LogSource): Promise<void> {
+  async function clearLogSource(source: LogSource, scope: LogScopeSelection): Promise<void> {
     try {
-      await window.lnwjud.clearLogBuffer({ source });
-      setLogLines((previous) => previous.filter((line) => line.source !== source));
+      await window.lnwjud.clearLogBuffer({
+        source,
+        ...(scope.workspaceId === null ? {} : { workspaceId: scope.workspaceId }),
+        ...(scope.sessionId === null ? {} : { sessionId: scope.sessionId }),
+      });
+      setLogLines((previous) => previous.filter((line) => line.source !== source || !lineMatchesScope(line, scope)));
     } catch (cause: unknown) {
       setError(errorMessage(cause, t('error.logBufferClear')));
     }
@@ -107,9 +114,15 @@ export function App(): ReactElement {
     }
   }
 
-  async function exportLogSource(source: LogSource): Promise<void> {
+  async function exportLogSource(source: LogSource, scope: LogScopeSelection, query: string): Promise<void> {
     try {
-      await window.lnwjud.exportLogs({ source, filePath: '' });
+      await window.lnwjud.exportLogs({
+        source,
+        filePath: '',
+        ...(scope.workspaceId === null ? {} : { workspaceId: scope.workspaceId }),
+        ...(scope.sessionId === null ? {} : { sessionId: scope.sessionId }),
+        ...(query.trim().length === 0 ? {} : { query: query.trim() }),
+      });
     } catch (cause: unknown) {
       setError(errorMessage(cause, t('error.logExport')));
     }
@@ -200,6 +213,28 @@ export function App(): ReactElement {
     }
   }
 
+  async function setWorkspaceArchived(workspaceId: string, archived: boolean): Promise<void> {
+    setError(null);
+    try {
+      await window.lnwjud.setWorkspaceArchived({ workspaceId, archived });
+      await refresh();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, t('error.workspaceArchive')));
+      throw cause;
+    }
+  }
+
+  async function deleteWorkspace(workspaceId: string): Promise<void> {
+    setError(null);
+    try {
+      await window.lnwjud.deleteWorkspace({ workspaceId });
+      await refresh();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, t('error.workspaceDelete')));
+      throw cause;
+    }
+  }
+
   async function setPermissionProfile(profile: PermissionProfileName): Promise<void> {
     try {
       await window.lnwjud.setPermissionProfile({ profile });
@@ -220,12 +255,12 @@ export function App(): ReactElement {
     }
   }
 
-  async function setAiDeletePolicy(enabled: boolean): Promise<void> {
+  async function setDestructiveDeletePolicy(policy: DestructiveDeletePolicy): Promise<void> {
     try {
-      await window.lnwjud.setAiDeletePolicy({ enabled });
+      await window.lnwjud.setAiDeletePolicy({ policy });
       await refresh();
     } catch (cause: unknown) {
-      setError(errorMessage(cause, propsText(locale, 'ไม่สามารถเปลี่ยนนโยบายการลบได้', 'Could not change AI delete policy')));
+      setError(errorMessage(cause, propsText(locale, 'ไม่สามารถเปลี่ยนนโยบายการลบได้', 'Could not change destructive-action policy')));
     }
   }
 
@@ -264,9 +299,12 @@ export function App(): ReactElement {
     }
   }
 
-  async function clearWorkLog(): Promise<void> {
+  async function clearWorkLog(scope: LogScopeSelection): Promise<void> {
     try {
-      await window.lnwjud.clearWorkLog();
+      await window.lnwjud.clearWorkLog({
+        ...(scope.workspaceId === null ? {} : { workspaceId: scope.workspaceId }),
+        ...(scope.sessionId === null ? {} : { sessionId: scope.sessionId }),
+      });
       await refresh();
     } catch (cause: unknown) {
       setError(errorMessage(cause, t('error.workLogClear')));
@@ -376,7 +414,7 @@ export function App(): ReactElement {
       {screen === 'home' ? (
         <ControlCenterPage
           dashboard={dashboard}
-          workspaces={workspaces}
+          workspaces={activeWorkspaces}
           locale={locale}
           mcpBusy={mcpBusy}
           tunnelBusy={tunnelBusy}
@@ -401,6 +439,8 @@ export function App(): ReactElement {
           selectedWorkspaceId={dashboard.selectedWorkspace?.id ?? null}
           onSelectWorkspace={selectWorkspace}
           onAddWorkspace={addWorkspace}
+          onSetWorkspaceArchived={setWorkspaceArchived}
+          onDeleteWorkspace={deleteWorkspace}
         />
       ) : null}
       {screen === 'git' ? (
@@ -408,13 +448,13 @@ export function App(): ReactElement {
           locale={locale}
           gitSummary={dashboard.gitSummary}
           selectedWorkspace={dashboard.selectedWorkspace}
-          workspaces={workspaces}
+          workspaces={activeWorkspaces}
           onSelectWorkspace={selectWorkspace}
           onRefresh={refresh}
         />
       ) : null}
       {screen === 'worklog' ? (
-        <WorkLogPage locale={locale} dashboard={dashboard} onClearWorkLog={clearWorkLog} />
+        <WorkLogPage locale={locale} dashboard={dashboard} workspaces={workspaces} onClearWorkLog={clearWorkLog} />
       ) : null}
       {screen === 'live' ? (
         <LiveLogsPage
@@ -431,6 +471,7 @@ export function App(): ReactElement {
           incidentClassification={incidentClassification}
           incidentCapturedAt={incidentCapturedAt}
           incidentNotice={incidentNotice}
+          workspaces={workspaces}
         />
       ) : null}
       {screen === 'settings' ? (
@@ -440,7 +481,7 @@ export function App(): ReactElement {
           onLocaleChange={changeLocale}
           onPermissionProfileChange={setPermissionProfile}
           onUnrestrictedChange={setUnrestrictedMode}
-          onAiDeleteChange={setAiDeletePolicy}
+          onDestructiveDeletePolicyChange={setDestructiveDeletePolicy}
           onStdioPolicyChange={setStdioPolicy}
           onCreateBackup={createBackup}
           onScheduleRestoreBackup={scheduleRestoreBackup}
@@ -467,4 +508,10 @@ function propsText(locale: UiLocale, th: string, en: string): string {
 
 function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.trim().length > 0 ? cause.message : fallback;
+}
+
+function lineMatchesScope(line: Pick<LogLine, 'workspaceId' | 'sessionId'>, scope: LogScopeSelection): boolean {
+  if (scope.workspaceId !== null && line.workspaceId !== scope.workspaceId) return false;
+  if (scope.sessionId !== null && line.sessionId !== scope.sessionId) return false;
+  return true;
 }

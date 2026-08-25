@@ -71,6 +71,54 @@ describe('DesktopRuntime persistence', () => {
     }
   }, 30_000);
 
+  it('keeps one desktop MCP listener alive while selecting and serving different workspaces', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-multi-data-'));
+    const rawWorkspaceA = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-multi-a-'));
+    const rawWorkspaceB = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-multi-b-'));
+    temporaryRoots.push(rawDataRoot, rawWorkspaceA, rawWorkspaceB);
+    const dataRoot = await realpath(rawDataRoot);
+    const workspaceRootA = await realpath(rawWorkspaceA);
+    const workspaceRootB = await realpath(rawWorkspaceB);
+    const runtime = createDesktopRuntime(dataRoot);
+    try {
+      const workspaceA = await runtime.services.addWorkspace({ rootPath: workspaceRootA });
+      const first = await runtime.services.startMcp({ workspaceId: workspaceA.id });
+      expect(first).toMatchObject({ running: true, workspaceId: null });
+      expect(first.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+      if (first.url === null) return;
+
+      const client = new Client({ name: 'desktop-multi-workspace-test', version: '1.0.0' });
+      const transport = new StreamableHTTPClientTransport(new URL(first.url));
+      try {
+        await client.connect(transport);
+        const workspaceB = await runtime.services.addWorkspace({ rootPath: workspaceRootB });
+        await runtime.services.selectWorkspace({ workspaceId: workspaceB.id });
+        const afterSwitch = await runtime.services.startMcp({ workspaceId: workspaceB.id });
+        expect(afterSwitch).toEqual(first);
+
+        const [infoA, infoB] = await Promise.all([
+          client.callTool({ name: 'workspace_info', arguments: { workspaceId: workspaceA.id } }),
+          client.callTool({ name: 'workspace_info', arguments: { workspaceId: workspaceB.id } }),
+        ]);
+        expect(infoA.isError).not.toBe(true);
+        expect(infoB.isError).not.toBe(true);
+        expect(infoA.structuredContent).toMatchObject({ id: workspaceA.id });
+        expect(infoB.structuredContent).toMatchObject({ id: workspaceB.id });
+        const scopedWorkLog = (await runtime.services.getDashboard()).workLog.filter((entry) => entry.toolName === 'workspace_info');
+        expect(scopedWorkLog.some((entry) => entry.workspaceId === workspaceA.id && entry.sessionId !== null)).toBe(true);
+        expect(scopedWorkLog.some((entry) => entry.workspaceId === workspaceB.id && entry.sessionId !== null)).toBe(true);
+
+        await runtime.services.selectWorkspace({ workspaceId: workspaceA.id });
+        const infoBAfterSwitch = await client.callTool({ name: 'workspace_info', arguments: { workspaceId: workspaceB.id } });
+        expect(infoBAfterSwitch.isError).not.toBe(true);
+        expect((await runtime.services.startMcp({ workspaceId: workspaceA.id })).url).toBe(first.url);
+      } finally {
+        await transport.close();
+      }
+    } finally {
+      await runtime.close();
+    }
+  }, 30_000);
   it('persists AI delete and STDIO security policy settings and applies scoped delete dynamically', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-policy-data-'));
     const rawWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-policy-workspace-'));
@@ -83,7 +131,10 @@ describe('DesktopRuntime persistence', () => {
       await writeFile(path.join(workspaceRoot, 'delete-policy.txt'), 'payload', 'utf8');
       await expect(runtime.mcpServices.file.deleteFile(runtime.mcpActor, workspace.id, { path: 'delete-policy.txt' }))
         .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
-      await expect(runtime.services.setAiDeletePolicy({ enabled: true })).resolves.toEqual({ enabled: true });
+      await expect(runtime.services.setAiDeletePolicy({ enabled: true })).resolves.toMatchObject({
+        enabled: true,
+        policy: { protectCriticalFiles: true, recoverableDelete: true, approvals: { delete_file: true, git_rm: false } },
+      });
       await expect(runtime.mcpServices.file.deleteFile(runtime.mcpActor, workspace.id, { path: 'delete-policy.txt' }))
         .resolves.toMatchObject({ ok: true });
       await expect(readFile(path.join(workspaceRoot, 'delete-policy.txt'), 'utf8')).rejects.toThrow();
@@ -91,7 +142,7 @@ describe('DesktopRuntime persistence', () => {
       await expect(runtime.services.setStdioPolicy({ profile: 'safe', strictRoots: true, allowedRoots: [workspaceRoot] }))
         .resolves.toMatchObject({ profile: 'safe', strictRoots: true, allowedRoots: [workspaceRoot] });
       await expect(runtime.services.getDashboard()).resolves.toMatchObject({
-        allowAiDelete: true, stdioPermissionProfile: 'safe', stdioStrictRoots: true, stdioAllowedRoots: [workspaceRoot],
+        allowAiDelete: true, destructiveDeletePolicy: { approvals: { delete_file: true, git_rm: false } }, stdioPermissionProfile: 'safe', stdioStrictRoots: true, stdioAllowedRoots: [workspaceRoot],
       });
     } finally {
       await runtime.close();
@@ -104,6 +155,72 @@ describe('DesktopRuntime persistence', () => {
       });
     } finally {
       await restarted.close();
+    }
+  }, 30_000);
+
+  it('archives, restores, and deletes project registrations without deleting the project folder', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-project-lifecycle-data-'));
+    const rawWorkspaceA = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-project-lifecycle-a-'));
+    const rawWorkspaceB = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-project-lifecycle-b-'));
+    temporaryRoots.push(rawDataRoot, rawWorkspaceA, rawWorkspaceB);
+    const dataRoot = await realpath(rawDataRoot);
+    const workspaceRootA = await realpath(rawWorkspaceA);
+    const workspaceRootB = await realpath(rawWorkspaceB);
+    const markerPath = path.join(workspaceRootA, 'keep-me.txt');
+    await writeFile(markerPath, 'project data must survive registration deletion', 'utf8');
+
+    const runtime = createDesktopRuntime(dataRoot);
+    try {
+      const workspaceA = await runtime.services.addWorkspace({ rootPath: workspaceRootA });
+      const workspaceB = await runtime.services.addWorkspace({ rootPath: workspaceRootB });
+      await runtime.services.selectWorkspace({ workspaceId: workspaceA.id });
+
+      await expect(runtime.services.setWorkspaceArchived({ workspaceId: workspaceA.id, archived: true })).resolves.toMatchObject({
+        id: workspaceA.id,
+        archivedAt: expect.any(String),
+        kind: 'project',
+      });
+      await expect(runtime.mcpServices.file.readFile(runtime.mcpActor, workspaceA.id, { path: 'keep-me.txt' }))
+        .resolves.toMatchObject({ ok: false, error: { code: 'WORKSPACE_NOT_FOUND' } });
+      const archivedList = await runtime.services.listWorkspaces();
+      expect(archivedList).toEqual(expect.arrayContaining([expect.objectContaining({ id: workspaceA.id, archivedAt: expect.any(String) })]));
+      expect((await runtime.services.getDashboard()).selectedWorkspace?.id).not.toBe(workspaceA.id);
+
+      await expect(runtime.services.addWorkspace({ rootPath: workspaceRootA })).resolves.toMatchObject({
+        id: workspaceA.id,
+        archivedAt: null,
+      });
+      expect((await runtime.services.listWorkspaces()).filter((entry) => entry.rootPath === workspaceRootA)).toHaveLength(1);
+      await runtime.services.setWorkspaceArchived({ workspaceId: workspaceA.id, archived: true });
+      await expect(runtime.services.setWorkspaceArchived({ workspaceId: workspaceA.id, archived: false })).resolves.toMatchObject({
+        id: workspaceA.id,
+        archivedAt: null,
+      });
+      await expect(runtime.mcpServices.file.readFile(runtime.mcpActor, workspaceA.id, { path: 'keep-me.txt' }))
+        .resolves.toMatchObject({ ok: true });
+
+      await runtime.services.selectWorkspace({ workspaceId: workspaceA.id });
+      await expect(runtime.services.deleteWorkspace({ workspaceId: workspaceA.id })).resolves.toEqual({
+        deleted: true,
+        workspaceId: workspaceA.id,
+        rootPath: workspaceRootA,
+      });
+      expect((await runtime.services.listWorkspaces()).some((entry) => entry.id === workspaceA.id)).toBe(false);
+      await expect(readFile(markerPath, 'utf8')).resolves.toBe('project data must survive registration deletion');
+      expect((await runtime.services.getDashboard()).selectedWorkspace?.id).not.toBe(workspaceA.id);
+      expect((await runtime.services.getDashboard()).selectedWorkspace?.id).toBeDefined();
+      expect(workspaceB.id).not.toBe(workspaceA.id);
+
+      if (process.platform === 'win32') {
+        const machineRoot = (await runtime.services.listWorkspaces()).find((entry) => entry.kind === 'machine_root');
+        expect(machineRoot).toBeDefined();
+        if (machineRoot !== undefined) {
+          await expect(runtime.services.setWorkspaceArchived({ workspaceId: machineRoot.id, archived: true })).rejects.toThrow(/managed automatically/);
+          await expect(runtime.services.deleteWorkspace({ workspaceId: machineRoot.id })).rejects.toThrow(/managed automatically/);
+        }
+      }
+    } finally {
+      await runtime.close();
     }
   }, 30_000);
 

@@ -50,6 +50,27 @@ describe('LogHub', () => {
     expect(snapshot.lines.map((line) => line.source)).toEqual(['mcp']);
   });
 
+  it('clears only the requested MCP workspace/session scope', () => {
+    const hub = new LogHub({ tunnelLogPath: 'Z:\\missing\\lnwjud-tunnel.log' });
+    const timestamp = '2026-08-20T00:00:01.000Z';
+    hub.syncWorkLog([
+      { id: 'a', timestamp, kind: 'result', toolName: 'read_file', resultCode: 'SUCCESS', targetSummary: null, workspaceId: 'ws-a', sessionId: 'session-a' },
+      { id: 'b', timestamp, kind: 'result', toolName: 'read_file', resultCode: 'SUCCESS', targetSummary: null, workspaceId: 'ws-a', sessionId: 'session-b' },
+      { id: 'c', timestamp, kind: 'result', toolName: 'read_file', resultCode: 'SUCCESS', targetSummary: null, workspaceId: 'ws-b', sessionId: 'session-c' },
+    ], []);
+
+    hub.clear('mcp', { workspaceId: 'ws-a', sessionId: 'session-a' });
+    expect(hub.snapshot().lines.filter((line) => line.source === 'mcp').map((line) => [line.workspaceId, line.sessionId])).toEqual([
+      ['ws-a', 'session-b'],
+      ['ws-b', 'session-c'],
+    ]);
+
+    hub.clear('mcp', { workspaceId: 'ws-a' });
+    expect(hub.snapshot().lines.filter((line) => line.source === 'mcp').map((line) => [line.workspaceId, line.sessionId])).toEqual([
+      ['ws-b', 'session-c'],
+    ]);
+  });
+
   it('tails an appended tunnel log file', async () => {
     vi.useFakeTimers();
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-loghub-'));
@@ -226,6 +247,56 @@ describe('LogHub', () => {
       expect.objectContaining({ kind: 'mcp', callId: 'first' }),
       expect.objectContaining({ kind: 'mcp', callId: 'second' }),
     ]);
+  });
+
+
+  it('keeps identical MCP occurrences from different sessions distinct', () => {
+    const hub = new LogHub({ tunnelLogPath: 'Z:\\missing\\lnwjud-tunnel.log' });
+    const timestamp = '2026-08-20T00:00:01.000Z';
+    hub.syncWorkLog([
+      { id: 'audit-a', timestamp, callId: 'same-call', kind: 'task', toolName: 'read_file', resultCode: 'STARTED', targetSummary: null, workspaceId: 'ws-1', sessionId: 'session-a' },
+      { id: 'audit-b', timestamp, callId: 'same-call', kind: 'task', toolName: 'read_file', resultCode: 'STARTED', targetSummary: null, workspaceId: 'ws-1', sessionId: 'session-b' },
+    ], []);
+
+    const lines = hub.snapshot().lines.filter((line) => line.source === 'mcp');
+    expect(lines).toHaveLength(2);
+    expect(lines.map((line) => [line.workspaceId, line.sessionId])).toEqual([
+      ['ws-1', 'session-a'],
+      ['ws-1', 'session-b'],
+    ]);
+  });
+
+  it('parses workspace/session scope from MCP activity NDJSON', async () => {
+    vi.useFakeTimers();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-loghub-mcp-scope-'));
+    temporaryRoots.push(root);
+    const activityPath = path.join(root, 'mcp-activity.log');
+    await writeFile(activityPath, `${JSON.stringify({
+      callId: 'scope-call', toolName: 'read_file', phase: 'completed', resultCode: 'SUCCESS',
+      workspaceId: 'workspace-a', sessionId: 'session-a', timestamp: '2026-08-20T00:00:01.000Z',
+    })}
+`, 'utf8');
+    const hub = new LogHub({ tunnelLogPath: path.join(root, 'missing-tunnel.log'), mcpActivityLogPath: activityPath });
+    hub.start();
+    await vi.advanceTimersByTimeAsync(700);
+    hub.stop();
+
+    expect(hub.snapshot().lines).toContainEqual(expect.objectContaining({
+      source: 'mcp', workspaceId: 'workspace-a', sessionId: 'session-a',
+    }));
+  });
+
+  it('keeps tunnel logs global and process logs workspace scoped', () => {
+    const hub = new LogHub({ tunnelLogPath: 'Z:\\missing\\lnwjud-tunnel.log' });
+    hub.feed('tunnel', 'info', 'connected');
+    hub.syncProcesses([{
+      id: 'process-1', workspaceId: 'workspace-a', sessionId: null,
+      executable: 'node', args: ['server.js'], state: 'running', logSummary: '',
+    }]);
+
+    const [tunnel, processLine] = hub.snapshot().lines;
+    expect(tunnel).toMatchObject({ source: 'tunnel', workspaceId: null, sessionId: null });
+    expect(processLine).toMatchObject({ source: 'process', workspaceId: 'workspace-a', sessionId: null });
   });
 
   it('notifies subscribers of new lines', () => {
