@@ -140,6 +140,9 @@ importers:
       react-dom:
         specifier: 19.1.1
         version: 19.1.1(react@19.1.1)
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.3
     devDependencies:
       '@modelcontextprotocol/client':
         specifier: 2.0.0
@@ -153,6 +156,9 @@ importers:
       '@types/react-dom':
         specifier: 19.1.7
         version: 19.1.7(@types/react@19.1.10)
+      '@types/ws':
+        specifier: ^8.18.0
+        version: 8.18.1
       '@vitejs/plugin-react':
         specifier: 5.0.2
         version: 5.0.2(vite@7.3.6(@types/node@24.13.3)(tsx@4.23.12))
