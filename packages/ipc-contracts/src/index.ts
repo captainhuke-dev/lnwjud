@@ -104,6 +104,11 @@ export interface UserSettings {
   readonly startMinimized: boolean;
   readonly tunnelAutoReconnect: boolean;
   readonly tunnelMaxAutoRestarts: number;
+  /** Persistent Relay (Phase 2): stable public MCP URL mode. */
+  readonly relayEnabled: boolean;
+  readonly relayUrl: string;
+  readonly relayProfiles: readonly string[];
+  readonly relayDeviceName: string;
   readonly extensions: {
     readonly mode: ExtensionMode;
     readonly disabledServers: readonly string[];

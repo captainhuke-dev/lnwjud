@@ -129,6 +129,10 @@ const defaultUserSettings: UserSettings = {
   startMinimized: false,
   tunnelAutoReconnect: true,
   tunnelMaxAutoRestarts: 5,
+  relayEnabled: false,
+  relayUrl: '',
+  relayProfiles: [],
+  relayDeviceName: '',
   extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
 };
 
@@ -581,6 +585,10 @@ function parseUserSettings(record: Record<string, unknown>): UserSettings {
     startMinimized: booleanField(record.startMinimized, 'startMinimized'),
     tunnelAutoReconnect: booleanField(record.tunnelAutoReconnect, 'tunnelAutoReconnect'),
     tunnelMaxAutoRestarts: boundedInteger(record.tunnelMaxAutoRestarts, 'tunnelMaxAutoRestarts', 0, 50),
+    relayEnabled: booleanField(record.relayEnabled, 'relayEnabled'),
+    relayUrl: nonEmptyString(record.relayUrl, 'relayUrl'),
+    relayProfiles: stringArray(record.relayProfiles, 'relayProfiles', 16),
+    relayDeviceName: nonEmptyString(record.relayDeviceName, 'relayDeviceName'),
     extensions: {
       mode: extensions.mode === 'allowlist' || extensions.mode === 'enable_all' ? extensions.mode : invalidField('extensions.mode'),
       disabledServers: stringArray(extensions.disabledServers, 'extensions.disabledServers', 256),

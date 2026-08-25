@@ -827,6 +827,10 @@ function readUserSettings(settingsRepository: SqliteSettingsRepository, env: Nod
   return {
     customPermission: parseCustomPermissionSettings(settingsRepository.get(USER_SETTING_KEYS.customPermissionProfile)),
     mcpCallTimeoutMs: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.mcpCallTimeoutMs), DEFAULT_MCP_CALL_TIMEOUT_MS, 1_000, 60 * 60_000),
+    relayEnabled: parseBooleanSetting(env.LNWJUD_RELAY_URL !== undefined ? 'true' : settingsRepository.get('relay_enabled'), false),
+    relayUrl: env.LNWJUD_RELAY_URL?.trim() ?? settingsRepository.get('relay_url') ?? '',
+    relayProfiles: parsePathList(env.LNWJUD_RELAY_PROFILES ?? settingsRepository.get('relay_profiles')),
+    relayDeviceName: env.LNWJUD_DEVICE_ID?.trim() ?? settingsRepository.get('relay_device_name') ?? '',
     mcpIdleTimeoutMs: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.mcpIdleTimeoutMs), DEFAULT_MCP_IDLE_TIMEOUT_MS, 30_000, 24 * 60 * 60_000),
     processTimeoutMs: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.processTimeoutMs), DEFAULT_PROCESS_TIMEOUT_MS, 1_000, 4 * 60 * 60_000),
     mcpPollWaitSeconds: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.mcpPollWaitSeconds), DEFAULT_MCP_POLL_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS),

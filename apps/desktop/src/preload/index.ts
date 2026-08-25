@@ -197,6 +197,12 @@ function userSettings(value: unknown): UserSettings {
     startMinimized: booleanField(value, 'startMinimized'),
     tunnelAutoReconnect: booleanField(value, 'tunnelAutoReconnect'),
     tunnelMaxAutoRestarts: integerField(value, 'tunnelMaxAutoRestarts'),
+    relayEnabled: booleanField(value, 'relayEnabled'),
+    relayUrl: stringField(value, 'relayUrl'),
+    relayProfiles: Array.isArray(value.relayProfiles)
+      ? (value.relayProfiles as unknown[]).filter((entry): entry is string => typeof entry === 'string')
+      : [],
+    relayDeviceName: stringField(value, 'relayDeviceName'),
     extensions: {
       mode,
       disabledServers: stringList(extensions.disabledServers),

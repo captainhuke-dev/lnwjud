@@ -37,6 +37,10 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   startMinimized: false,
   tunnelAutoReconnect: true,
   tunnelMaxAutoRestarts: 5,
+  relayEnabled: false,
+  relayUrl: '',
+  relayProfiles: [],
+  relayDeviceName: '',
   extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
 };
 
@@ -260,6 +264,28 @@ export function UserConfigPanel({ locale, settings, section, onSave }: UserConfi
             ))}
           </div>
           <p className="hint">{locale === 'th' ? 'Environment ของ MCP Server ถูกเก็บใน local settings — หลีกเลี่ยงการใส่ secret สำคัญในช่องนี้' : 'MCP server environment values are stored in local settings — avoid placing important secrets here.'}</p>
+        </section>
+      ) : null}
+
+      {section === 'tunnel' ? (
+        <section className="panel settings-card settings-card-polished" aria-label="Persistent Relay">
+          <CardHeading icon="🔗" title={locale === 'th' ? 'Persistent Relay — Remote MCP Profile' : 'Persistent Relay — Remote MCP Profile'} subtitle={locale === 'th' ? 'เชื่อม AI กับ URL ประจำ profile ที่ไม่เปลี่ยน — เครื่องหลุด/รีสตาร์ต connector ยังใช้ได้โดยไม่ต้อง refresh' : 'Give AI clients a stable MCP URL; desktop restarts and network drops no longer break the connector.'} />
+          <div className="setting-grid two-col align-center">
+            <SettingSwitch checked={draft.relayEnabled} label={locale === 'th' ? 'เปิดใช้ Persistent Relay' : 'Enable Persistent Relay'} description={locale === 'th' ? 'Desktop จะ dial-out ไปหา relay เอง — ไม่ต้องเปิด port รับเข้า' : 'The desktop dials out to the relay; no inbound ports required.'} onChange={(value) => patch({ relayEnabled: value })} />
+          </div>
+          <div className="setting-field">
+            <label className="field-label">Relay URL</label>
+            <input type="text" className="settings-input" placeholder="wss://mcp.example.com/agent/ws" value={draft.relayUrl} onChange={(event) => patch({ relayUrl: event.target.value })} />
+          </div>
+          <div className="setting-field">
+            <label className="field-label">{locale === 'th' ? 'Profile IDs (คั่นด้วย ;)' : 'Profile IDs (; separated)'}</label>
+            <input type="text" className="settings-input" placeholder="dev;staging" value={draft.relayProfiles.join(';')} onChange={(event) => patch({ relayProfiles: event.target.value.split(';').map((entry) => entry.trim()).filter((entry) => entry.length > 0) })} />
+          </div>
+          <div className="setting-field">
+            <label className="field-label">{locale === 'th' ? 'ชื่ออุปกรณ์นี้' : 'This device name'}</label>
+            <input type="text" className="settings-input" placeholder="PC-5090" value={draft.relayDeviceName} onChange={(event) => patch({ relayDeviceName: event.target.value })} />
+          </div>
+          <p className="hint">{locale === 'th' ? 'Connection หลุดได้ — session งานของผู้ใช้ไม่หาย: relay เก็บ result และ replay ให้อัตโนมัติ' : 'Transport may disconnect; your work session will not — the relay journals results and replays them automatically.'}</p>
         </section>
       ) : null}
 
