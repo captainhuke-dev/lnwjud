@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { DeviceRegistry, parseHello } from './device-registry.js';
+import { AGENT_PROTOCOL_VERSION, isAgentProtocolCompatible } from '@lnwjud/shared';
 
 /**
  * Task 1.3 — /agent/ws device channel.
@@ -44,6 +45,13 @@ export function registerDeviceChannel(app: FastifyInstance, registry: DeviceRegi
           clearTimeout(helloTimer);
           return;
         }
+        // Task: protocol negotiation — reject incompatible agents with an
+        // upgrade hint instead of accepting frames we cannot trust.
+        if (!isAgentProtocolCompatible(hello.agent_protocol)) {
+          try { ws.close(4003, 'agent protocol ' + hello.agent_protocol + ' incompatible; upgrade lnwjud to >= ' + AGENT_PROTOCOL_VERSION); } catch { /* noop */ }
+          clearTimeout(helloTimer);
+          return;
+        }
         const connection = registry.register({
           deviceId: hello.device_id,
           profileIds: hello.profile_ids,
@@ -56,6 +64,7 @@ export function registerDeviceChannel(app: FastifyInstance, registry: DeviceRegi
         clearTimeout(helloTimer);
         ws.send(JSON.stringify({
           type: 'READY',
+          agent_protocol: AGENT_PROTOCOL_VERSION,
           connection_id: connection.connectionId,
           heartbeat_interval_ms: HEARTBEAT_INTERVAL_MS,
         }));

@@ -4,6 +4,7 @@ import { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildRelayServer } from '../src/server.js';
+import { AGENT_PROTOCOL_VERSION } from '@lnwjud/shared';
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -36,6 +37,7 @@ async function connectAgent(relayUrl: string, deviceId: string, profileIds: stri
   const readyPromise = once(ws, 'message');
   ws.send(JSON.stringify({
     type: 'HELLO',
+    agent_protocol: AGENT_PROTOCOL_VERSION,
     device_id: deviceId,
     profile_ids: profileIds,
     runtime_version: '4.8.5',

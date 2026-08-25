@@ -121,6 +121,7 @@ export class DeviceRegistry {
 /** Parse and validate an agent HELLO frame. Returns null when malformed. */
 export function parseHello(raw: RawData): {
   type: 'HELLO';
+  agent_protocol: string;
   device_id: string;
   profile_ids: string[];
   runtime_version: string;
@@ -131,11 +132,13 @@ export function parseHello(raw: RawData): {
     if (typeof value !== 'object' || value === null) return null;
     const record = value as Record<string, unknown>;
     if (record.type !== 'HELLO') return null;
+    if (typeof record.agent_protocol !== 'string' || record.agent_protocol.length === 0) return null;
     if (typeof record.device_id !== 'string' || record.device_id.length === 0) return null;
     if (!Array.isArray(record.profile_ids)) return null;
     const profileIds = record.profile_ids.filter((id): id is string => typeof id === 'string');
     return {
       type: 'HELLO',
+      agent_protocol: record.agent_protocol as string,
       device_id: record.device_id,
       profile_ids: profileIds,
       runtime_version: typeof record.runtime_version === 'string' ? record.runtime_version : 'unknown',

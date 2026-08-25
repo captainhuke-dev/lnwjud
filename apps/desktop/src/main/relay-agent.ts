@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { ExecutionLedger } from './execution-ledger.js';
+import { AGENT_PROTOCOL_VERSION } from '@lnwjud/shared';
 import WebSocket from 'ws';
 
 /**
@@ -75,6 +76,7 @@ export class RelayAgent {
       const tools = this.options.listTools();
       socket.send(JSON.stringify({
         type: 'HELLO',
+        agent_protocol: AGENT_PROTOCOL_VERSION,
         device_id: this.options.deviceId,
         profile_ids: [...this.options.profileIds],
         runtime_version: this.options.runtimeVersion,
@@ -87,9 +89,19 @@ export class RelayAgent {
       void this.handleFrame(raw);
     });
 
-    socket.on('close', () => {
+    socket.on('close', (code: number, reasonBuffer: Buffer) => {
       this.stopHeartbeat();
       this.state = 'disconnected';
+      // Protocol negotiation rejection (4003): reconnecting cannot help — the
+      // installed lnwjud build is too old for the relay. Surface the upgrade
+      // requirement and stop instead of hammering the relay forever.
+      if (code === 4003) {
+        const reason = reasonBuffer.toString('utf8');
+        process.stderr.write('lnwjud relay agent: relay rejected this build (' + reason + '). Upgrade lnwjud desktop and restart the app to reconnect.' + String.fromCharCode(10));
+        this.state = 'disconnected';
+        this.stopped = true;
+        return;
+      }
       this.scheduleReconnect();
     });
 
