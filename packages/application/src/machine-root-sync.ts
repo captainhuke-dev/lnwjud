@@ -8,6 +8,16 @@ import {
   type WorkspaceService,
 } from '@lnwjud/workspace';
 
+/** Match both the mapped drive path and its canonical network path. */
+export function matchesMachineRoot(
+  workspace: Pick<Workspace, 'rootPath' | 'realRootPath'>,
+  root: string,
+): boolean {
+  const target = normalizeWorkspaceRoot(root).toLowerCase();
+  return [workspace.rootPath, workspace.realRootPath]
+    .some((candidate) => normalizeWorkspaceRoot(candidate).toLowerCase() === target);
+}
+
 /** Ensure the drive containing the preferred workspace is registered as a machine root. */
 export async function syncPreferredMachineRoot(
   workspaceService: WorkspaceService,
@@ -17,8 +27,7 @@ export async function syncPreferredMachineRoot(
   if (!existsSync(root)) return null;
 
   const existing = await workspaceService.list();
-  const target = normalizeWorkspaceRoot(root).toLowerCase();
-  const found = existing.find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === target);
+  const found = existing.find((entry) => matchesMachineRoot(entry, root));
   if (found !== undefined) return found;
 
   const added = await workspaceService.add(`Local Disk ${root[0]?.toUpperCase() ?? ''}:`, root);
@@ -33,8 +42,7 @@ export async function syncAllDriveRoots(workspaceService: WorkspaceService): Pro
   const existing = await workspaceService.list();
   let primary: Workspace | null = null;
   for (const root of roots) {
-    const target = normalizeWorkspaceRoot(root).toLowerCase();
-    const found = existing.find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === target);
+    const found = existing.find((entry) => matchesMachineRoot(entry, root));
     if (found !== undefined) {
       if (primary === null) primary = found;
       continue;
