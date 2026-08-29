@@ -60,7 +60,7 @@ describe('PowerShell tunnel lock heartbeat compatibility', () => {
     expect(JSON.parse(await readFile(lockPath, 'utf8'))).toEqual(existing);
   });
 
-  it('reclaims stale v2 heartbeat when liveness is unverifiable and republishes schema v2', async () => {
+  it('reclaims stale v2 heartbeat when liveness is unverifiable but keeps a non-heartbeating PowerShell owner on schema v1', async () => {
     const root = await temporaryDirectory();
     const lockPath = path.join(root, 'lnwjud.tunnel.lock');
     const staleHeartbeat = new Date(Date.now() - 91_000).toISOString();
@@ -80,7 +80,7 @@ describe('PowerShell tunnel lock heartbeat compatibility', () => {
 
     expect(JSON.parse(output)).toMatchObject({ acquired: true, owner: { pid: 88 } });
     const published = JSON.parse(await readFile(lockPath, 'utf8')) as Record<string, unknown>;
-    expect(published).toMatchObject({ version: 2, pid: 88 });
-    expect(published.lastHeartbeatAt).toEqual(expect.stringMatching(/Z$/));
+    expect(published).toMatchObject({ version: 1, pid: 88 });
+    expect(published).not.toHaveProperty('lastHeartbeatAt');
   });
 });
