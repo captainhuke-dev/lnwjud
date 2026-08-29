@@ -1089,18 +1089,44 @@ async function isLnwjudTunnelProcessRunning(): Promise<boolean> {
 }
 
 async function findLnwjudTunnelProcessPids(): Promise<readonly number[]> {
-  const result = await Promise.race([
-    execFileAsync('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      "@(Get-CimInstance Win32_Process -Filter \"Name = 'tunnel-client.exe'\" -ErrorAction Stop | Where-Object { $_.CommandLine -match '(?i)(--profile\\s+lnwjud|lnwjud\\.yaml)' } | Select-Object -ExpandProperty ProcessId) -join ','",
-    ], { windowsHide: true, encoding: 'utf8', timeout: 3_000 }),
-    new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('tunnel process probe timed out')), 3_500);
-    }),
-  ]);
-  return result.stdout.trim().split(',').map((value) => Number(value.trim())).filter((pid) => Number.isInteger(pid) && pid > 0 && pid <= 2_147_483_647);
+  try {
+    const result = await Promise.race([
+      execFileAsync('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        "@(Get-CimInstance Win32_Process -Filter \"Name = 'tunnel-client.exe'\" -ErrorAction Stop | Where-Object { $_.CommandLine -match '(?i)(--profile\\s+lnwjud|lnwjud\\.yaml)' } | Select-Object -ExpandProperty ProcessId) -join ','",
+      ], { windowsHide: true, encoding: 'utf8', timeout: 3_000 }),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('tunnel process probe timed out')), 3_500);
+      }),
+    ]);
+    return result.stdout.trim().split(',').map((value) => Number(value.trim())).filter((pid) => Number.isInteger(pid) && pid > 0 && pid <= 2_147_483_647);
+  } catch (probeError: unknown) {
+    // WMI/CIM can be unavailable during Windows startup or shutdown. A
+    // process-name-only fallback remains fail-safe: any tunnel-client process
+    // is treated as a possible owner, while an empty result permits stale-lock
+    // recovery to continue.
+    try {
+      const result = await execFileAsync('tasklist.exe', [
+        '/FI', 'IMAGENAME eq tunnel-client.exe',
+        '/FO', 'CSV',
+        '/NH',
+      ], { windowsHide: true, encoding: 'utf8', timeout: 3_000 });
+      return parseTasklistProcessIds(result.stdout);
+    } catch {
+      throw probeError;
+    }
+  }
+}
+
+export function parseTasklistProcessIds(output: string): readonly number[] {
+  const pids = new Set<number>();
+  for (const match of output.matchAll(/"tunnel-client\.exe"\s*,\s*"(\d+)"/gi)) {
+    const pid = Number(match[1]);
+    if (Number.isInteger(pid) && pid > 0 && pid <= 2_147_483_647) pids.add(pid);
+  }
+  return [...pids];
 }
 
 export function waitForTunnelChildExit(child: Pick<ChildProcess, 'exitCode' | 'once' | 'removeListener'>, timeoutMs = 5_000): Promise<void> {

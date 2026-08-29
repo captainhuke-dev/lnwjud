@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TunnelController } from '../src/main/tunnel-controller.js';
-import { waitForTunnelChildExit } from '../src/main/tunnel-controller.js';
+import { parseTasklistProcessIds, waitForTunnelChildExit } from '../src/main/tunnel-controller.js';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { acquireTunnelLock, readTunnelLock, type ProcessProbeResult, type TunnelLockAcquisition, type TunnelLockOwner } from '../src/main/tunnel-lock.js';
@@ -20,6 +20,11 @@ afterEach(async () => {
 });
 
 describe('TunnelController lifecycle', () => {
+  it('parses tasklist output for tunnel-client process IDs', () => {
+    expect(parseTasklistProcessIds('"tunnel-client.exe","18020","Console","1","12,345 K"\r\n')).toEqual([18020]);
+    expect(parseTasklistProcessIds('INFO: No tasks are running which match the specified criteria.')).toEqual([]);
+  });
+
   it('holds shutdown completion until a delayed tunnel child exits', async () => {
     const child = new EventEmitter() as EventEmitter & { exitCode: number | null };
     child.exitCode = null;
