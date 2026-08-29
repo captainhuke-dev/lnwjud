@@ -1,7 +1,8 @@
-﻿import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+﻿import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { copyBundledRuntime } from './bundled-runtime-copy.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const buildDir = path.join(desktopRoot, 'build');
@@ -33,6 +34,6 @@ rem Use the private Node 24 runtime shipped with lnwjud; no system Node.js is re
 `;
 
 mkdirSync(buildDir, { recursive: true });
-copyFileSync(process.execPath, bundledNodePath);
+const copyResult = copyBundledRuntime(process.execPath, bundledNodePath);
 writeFileSync(cmdPath, contents.replace(/\n/g, '\r\n'), 'utf8');
-process.stdout.write(`Bundled private Node runtime ${process.versions.node} -> ${bundledNodePath}\n`);
+process.stdout.write(`${copyResult === 'copied' ? 'Bundled' : 'Reused'} private Node runtime ${process.versions.node} -> ${bundledNodePath}\n`);
