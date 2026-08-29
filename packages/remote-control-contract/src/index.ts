@@ -60,7 +60,7 @@ export function parseRemoteCommandV1(value: unknown): RemoteCommandV1 {
   if (!isNonEmptyString(value.actorId)) {
     throw new Error('Remote command actor id must be non-empty');
   }
-  if (!Number.isInteger(value.deliverySequence) || typeof value.deliverySequence !== 'number' || value.deliverySequence < 1) {
+  if (typeof value.deliverySequence !== 'number' || !Number.isInteger(value.deliverySequence) || value.deliverySequence < 1) {
     throw new Error('Remote command delivery sequence must be a positive integer');
   }
 
