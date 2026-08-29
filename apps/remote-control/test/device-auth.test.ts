@@ -19,66 +19,75 @@ async function openDatabase(): Promise<RemoteControlDatabase> {
   return new RemoteControlDatabase(path.join(root, 'remote-control.sqlite'));
 }
 
+async function withDatabase<T>(run: (db: RemoteControlDatabase) => T | Promise<T>): Promise<T> {
+  const db = await openDatabase();
+  try {
+    return await run(db);
+  } finally {
+    db.close();
+  }
+}
+
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe('remote-control device enrollment', () => {
   it('issues a ten-minute enrollment whose raw code is never persisted', async () => {
-    const db = await openDatabase();
-    const now = new Date('2026-08-29T10:00:00.000Z');
-    const issued = issueEnrollmentCode(db, 'desktop-1', now);
+    await withDatabase((db) => {
+      const now = new Date('2026-08-29T10:00:00.000Z');
+      const issued = issueEnrollmentCode(db, 'desktop-1', now);
 
-    expect(issued.expiresAt).toBe('2026-08-29T10:10:00.000Z');
-    const row = db.connection.prepare(
-      'SELECT secret_hash, expires_at FROM enrollments WHERE enrollment_id = ?',
-    ).get(issued.enrollmentId) as { secret_hash: string; expires_at: string } | undefined;
-    expect(row?.secret_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(row?.secret_hash).not.toContain(issued.code);
-    expect(row?.expires_at).toBe(issued.expiresAt);
-    db.close();
+      expect(issued.expiresAt).toBe('2026-08-29T10:10:00.000Z');
+      const row = db.connection.prepare(
+        'SELECT secret_hash, expires_at FROM enrollments WHERE enrollment_id = ?',
+      ).get(issued.enrollmentId) as { secret_hash: string; expires_at: string } | undefined;
+      expect(row?.secret_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(row?.secret_hash).not.toContain(issued.code);
+      expect(row?.expires_at).toBe(issued.expiresAt);
+    });
   });
 
   it('redeems once, persists only a SHA-256 token hash, and rejects a second redemption', async () => {
-    const db = await openDatabase();
-    const now = new Date('2026-08-29T10:00:00.000Z');
-    const issued = issueEnrollmentCode(db, 'desktop-1', now);
-    const redeemed = redeemEnrollmentCode(db, issued.enrollmentId, issued.code, now);
+    await withDatabase((db) => {
+      const now = new Date('2026-08-29T10:00:00.000Z');
+      const issued = issueEnrollmentCode(db, 'desktop-1', now);
+      const redeemed = redeemEnrollmentCode(db, issued.enrollmentId, issued.code, now);
 
-    const device = db.connection.prepare(
-      'SELECT token_hash FROM devices WHERE device_id = ?',
-    ).get(redeemed.deviceId) as { token_hash: string } | undefined;
-    expect(device?.token_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(device?.token_hash).not.toContain(redeemed.deviceToken);
-    expect(() => redeemEnrollmentCode(db, issued.enrollmentId, issued.code, now)).toThrow();
-    db.close();
+      const device = db.connection.prepare(
+        'SELECT token_hash FROM devices WHERE device_id = ?',
+      ).get(redeemed.deviceId) as { token_hash: string } | undefined;
+      expect(device?.token_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(device?.token_hash).not.toContain(redeemed.deviceToken);
+      expect(() => redeemEnrollmentCode(db, issued.enrollmentId, issued.code, now)).toThrow();
+    });
   });
 
   it('rejects an enrollment after its ten-minute expiry', async () => {
-    const db = await openDatabase();
-    const now = new Date('2026-08-29T10:00:00.000Z');
-    const issued = issueEnrollmentCode(db, 'desktop-1', now);
-    expect(() => redeemEnrollmentCode(
-      db,
-      issued.enrollmentId,
-      issued.code,
-      new Date('2026-08-29T10:10:00.001Z'),
-    )).toThrow();
-    db.close();
+    await withDatabase((db) => {
+      const now = new Date('2026-08-29T10:00:00.000Z');
+      const issued = issueEnrollmentCode(db, 'desktop-1', now);
+      expect(() => redeemEnrollmentCode(
+        db,
+        issued.enrollmentId,
+        issued.code,
+        new Date('2026-08-29T10:10:00.001Z'),
+      )).toThrow();
+    });
   });
 
   it('verifies only the correct active token and fails after revocation', async () => {
-    const db = await openDatabase();
-    const token = 'correct-device-token';
-    const hash = `sha256:${createHash('sha256').update(token).digest('hex')}`;
-    db.connection.prepare(
-      'INSERT INTO devices (device_id, label, token_hash, created_at) VALUES (?, ?, ?, ?)',
-    ).run('device-1', 'desktop-1', hash, '2026-08-29T10:00:00.000Z');
+    await withDatabase((db) => {
+      const token = 'correct-device-token';
+      const hash = `sha256:${createHash('sha256').update(token).digest('hex')}`;
+      db.connection.prepare(
+        'INSERT INTO devices (device_id, label, token_hash, created_at) VALUES (?, ?, ?, ?)',
+      ).run('device-1', 'desktop-1', hash, '2026-08-29T10:00:00.000Z');
 
-    expect(verifyDeviceToken(db, 'device-1', token)).toBe(true);
-    expect(verifyDeviceToken(db, 'device-1', 'wrong-token')).toBe(false);
-    revokeDevice(db, 'device-1', new Date('2026-08-29T10:01:00.000Z'));
-    expect(verifyDeviceToken(db, 'device-1', token)).toBe(false);
-    db.close();
+      expect(verifyDeviceToken(db, 'device-1', token)).toBe(true);
+      expect(verifyDeviceToken(db, 'device-1', 'wrong-token')).toBe(false);
+      revokeDevice(db, 'device-1', new Date('2026-08-29T10:01:00.000Z'));
+      expect(verifyDeviceToken(db, 'device-1', token)).toBe(false);
+    });
   });
 });
