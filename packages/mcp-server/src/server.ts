@@ -7,6 +7,7 @@ import { withProgressHeartbeat, type ProgressNotifyContext } from './progress-he
 import { IncrementalVerifier } from './incremental-verifier.js';
 import { RunBudgetGuard, type RunBudgetContext } from './run-budget.js';
 import { registerTasksProtocol } from './tasks-protocol.js';
+import { executeToolCallSafely } from './tool-result-safety.js';
 import { ToolRegistry, type ActiveProjectScope, type HostMutationApprovalRequest, type McpApplicationServices, type WorkspaceScope } from './tool-registry.js';
 import { actorForRequestScope, type McpRequestScope } from './request-scope.js';
 
@@ -81,11 +82,13 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       annotations: tool.annotations,
     }, async (input: unknown, context): Promise<CallToolResult> => {
       const dispatchContext = context as ProgressNotifyContext & RunBudgetContext;
-      runBudgetGuard.begin(dispatchContext);
-      const result = await withProgressHeartbeat(dispatchContext, tool.name, async () => (
-        registry.invoke(tool.name, input, readTraceContext(context)) as unknown as Promise<CallToolResult>
-      ));
-      return runBudgetGuard.finish(dispatchContext, result);
+      return executeToolCallSafely(async () => {
+        runBudgetGuard.begin(dispatchContext);
+        const result = await withProgressHeartbeat(dispatchContext, tool.name, async () => (
+          registry.invoke(tool.name, input, readTraceContext(context)) as unknown as Promise<CallToolResult>
+        ));
+        return runBudgetGuard.finish(dispatchContext, result);
+      });
     });
   }
   return server;
