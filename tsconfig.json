@@ -3,6 +3,7 @@
   "references": [
     { "path": "./apps/cli" },
     { "path": "./apps/desktop" },
+    { "path": "./apps/remote-control" },
     { "path": "./packages/domain" },
     { "path": "./packages/capabilities" },
     { "path": "./packages/extensions" },
