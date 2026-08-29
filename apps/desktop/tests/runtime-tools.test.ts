@@ -23,4 +23,11 @@ describe('bundled Windows runtime tools', () => {
     expect(prependBundledRuntimeToolsToPath(environment, 'C:\\missing', () => false)).toEqual([]);
     expect(environment.Path).toBe('C:\\Windows\\System32');
   });
+
+  it('prepends the local development bundle when it exists', () => {
+    const environment: NodeJS.ProcessEnv = { Path: 'C:\\Windows\\System32' };
+    const localBundle = path.resolve('build/runtime-tools/ripgrep');
+    expect(prependBundledRuntimeToolsToPath(environment, undefined, (candidate) => candidate === localBundle)).toEqual([localBundle]);
+    expect(environment.Path?.split(path.delimiter)).toEqual([localBundle, 'C:\\Windows\\System32']);
+  });
 });

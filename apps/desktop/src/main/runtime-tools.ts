@@ -11,7 +11,13 @@ export function prependBundledRuntimeToolsToPath(
   resourcesPath = (process as NodeJS.Process & { readonly resourcesPath?: string }).resourcesPath,
   directoryExists: (candidate: string) => boolean = existsSync,
 ): readonly string[] {
-  const bundled = bundledRuntimeToolDirectories(resourcesPath).filter(directoryExists);
+  const localDevelopmentBundles = [
+    path.join(process.cwd(), 'apps', 'desktop', 'build', 'runtime-tools', 'ripgrep'),
+    path.join(process.cwd(), 'build', 'runtime-tools', 'ripgrep'),
+  ];
+  const candidates = [...bundledRuntimeToolDirectories(resourcesPath), ...localDevelopmentBundles]
+    .filter((directory, index, entries) => entries.indexOf(directory) === index);
+  const bundled = candidates.filter(directoryExists);
   if (bundled.length === 0) return [];
 
   const key = environment.Path !== undefined ? 'Path' : environment.PATH !== undefined ? 'PATH' : process.platform === 'win32' ? 'Path' : 'PATH';
