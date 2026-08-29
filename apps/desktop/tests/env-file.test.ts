@@ -19,8 +19,8 @@ async function envFixture(contents: string): Promise<string> {
 }
 
 describe('desktop .env loader', () => {
-  it('loads quoted values and removes inline comments', async () => {
-    const file = await envFixture('LNWJUD_UNRESTRICTED="0"\nLNWJUD_CAPABILITY_EXTRA_ROOTS="Z:\\\\;Y:\\\\" # NAS roots\n');
+  it('loads quoted values and removes inline comments without escaping Windows path separators', async () => {
+    const file = await envFixture('LNWJUD_UNRESTRICTED="0"\nLNWJUD_CAPABILITY_EXTRA_ROOTS="Z:\\;Y:\\" # NAS roots\n');
     const environment: NodeJS.ProcessEnv = {};
 
     await loadEnvironmentFile(file, environment);
