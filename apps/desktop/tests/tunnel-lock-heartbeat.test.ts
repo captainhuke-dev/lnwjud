@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   HEARTBEAT_STALE_MS,
   acquireTunnelLock,
-  readTunnelLock,
+  readTunnelLockHeartbeat,
   refreshTunnelLockHeartbeat,
   type TunnelLockOwner,
 } from '../src/main/tunnel-lock.js';
@@ -59,7 +59,7 @@ describe('tunnel lock heartbeat recovery', () => {
     expect(claim.acquired).toBe(true);
 
     await expect(refreshTunnelLockHeartbeat(directory, lockOwner)).resolves.toBe(true);
-    expect((await readTunnelLock(directory))?.lastHeartbeatAt).toMatch(/Z$/);
+    expect((await readTunnelLockHeartbeat(directory))?.lastHeartbeatAt).toMatch(/Z$/);
     if (claim.acquired) await claim.release();
   });
 });
