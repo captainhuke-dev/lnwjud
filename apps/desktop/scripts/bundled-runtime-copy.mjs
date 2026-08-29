@@ -1,4 +1,5 @@
 import { copyFileSync, existsSync } from 'node:fs';
+import process from 'node:process';
 
 const REUSABLE_LOCK_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
 
@@ -8,7 +9,7 @@ export function copyBundledRuntime(
   {
     copyFile = copyFileSync,
     exists = existsSync,
-    warn = (message) => console.warn(message),
+    warn = (message) => process.stderr.write(`${message}\n`),
   } = {},
 ) {
   try {
