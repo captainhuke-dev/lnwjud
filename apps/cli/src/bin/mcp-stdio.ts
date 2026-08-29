@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { syncMachineRoots } from '@lnwjud/application';
+import { syncExtraCapabilityRoots, syncMachineRoots } from '@lnwjud/application';
 import { startMcpStdio } from '@lnwjud/mcp-server';
 import {
   STDIO_ALLOWED_ROOTS_SETTING_KEY,
@@ -15,6 +15,7 @@ import {
 } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync, SqliteBackupService, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository } from '@lnwjud/storage';
 import { machineRootPath, normalizeWorkspaceRoot, WorkspaceService, type Workspace } from '@lnwjud/workspace';
+import { configuredStdioCapabilityRoots, extraStdioCapabilityRoots } from '../runtime/stdio-capability-roots.js';
 import { createStdioMcpRuntime } from '../runtime/stdio-mcp-runtime.js';
 import { StrictWorkspaceRepository, canonicalizeAllowedRoots, requestedPathInsideAllowedRoot } from '../runtime/strict-workspace-repository.js';
 import { resetWorkspaceRegistrations } from '../runtime/workspace-reset.js';
@@ -131,10 +132,17 @@ async function main(): Promise<void> {
     workspace = selected;
   } else {
     const restrictedRoot = machineRootPath(requestedPath);
-    process.env.LNWJUD_CAPABILITY_ROOTS = process.env.LNWJUD_CAPABILITY_ROOTS?.trim()
-      || restrictedRoot.replace(/\\/g, '/');
+    const extraCapabilityRoots = extraStdioCapabilityRoots(process.env);
+    const configuredCapabilityRoots = configuredStdioCapabilityRoots(process.env);
+    const effectiveCapabilityRoots = process.env.LNWJUD_CAPABILITY_ROOTS?.trim()
+      ? configuredCapabilityRoots
+      : [path.resolve(restrictedRoot), ...configuredCapabilityRoots];
+    process.env.LNWJUD_CAPABILITY_ROOTS = effectiveCapabilityRoots
+      .map((root) => root.replace(/\\/g, '/'))
+      .join(';');
     const machineRoot = await syncMachineRoots(workspaceService, unrestricted, requestedPath);
     if (machineRoot === null) throw new Error('Could not register machine root');
+    await syncExtraCapabilityRoots(workspaceService, extraCapabilityRoots);
 
     const requestedNorm = normalizeWorkspaceRoot(requestedPath).toLowerCase();
     const workspaces = await workspaceService.list();
