@@ -55,3 +55,24 @@ export function syncMachineRoots(
 ): Promise<Workspace | null> {
   return unrestricted ? syncAllDriveRoots(workspaceService) : syncPreferredMachineRoot(workspaceService, preferredPath);
 }
+
+/** Register explicitly configured extra capability roots without enabling unrestricted mode. */
+export async function syncExtraCapabilityRoots(
+  workspaceService: WorkspaceService,
+  extraRoots: readonly string[],
+  pathExists: (root: string) => boolean = existsSync,
+): Promise<void> {
+  for (const raw of extraRoots) {
+    const root = normalizeWorkspaceRoot(raw);
+    if (!pathExists(root)) continue;
+    const target = root.toLowerCase();
+    const existing = await workspaceService.list();
+    const alreadyRegistered = existing.some((entry) => (
+      normalizeWorkspaceRoot(entry.rootPath).toLowerCase() === target
+      || normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === target
+    ));
+    if (alreadyRegistered) continue;
+    const label = /^[A-Za-z]:\\?$/.test(root) ? `Local Disk ${root[0]?.toUpperCase() ?? ''}:` : `Mount ${root}`;
+    await workspaceService.add(label, root);
+  }
+}
