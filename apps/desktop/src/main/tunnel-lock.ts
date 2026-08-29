@@ -5,7 +5,10 @@ import path from 'node:path';
 import { probeProcessStart, type ProcessProbeResult } from '@lnwjud/mcp-server';
 
 const LOCK_FILE = 'lnwjud.tunnel.lock';
-const LOCK_VERSION = 1;
+const LOCK_VERSION = 2;
+const LEGACY_LOCK_VERSION = 1;
+export const HEARTBEAT_INTERVAL_MS = 30_000;
+export const HEARTBEAT_STALE_MS = 90_000;
 const MUTEX_WAIT_MS = 5_000;
 const ISO_UTC_MILLISECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
@@ -13,6 +16,7 @@ export interface TunnelLockOwner {
   readonly pid: number;
   readonly processStartedAt: string;
   readonly acquiredAt: string;
+  readonly lastHeartbeatAt?: string;
 }
 
 export interface TunnelLockHandle {
@@ -57,9 +61,11 @@ export async function acquireTunnelLock(options: TunnelLockOptions): Promise<Tun
     }
 
     const probe = await inspectProcess(existing.owner.pid);
-    if (probe.state === 'unverifiable') throw new Error(`Tunnel lock owner liveness is unverifiable: ${probe.reason}`);
+    if (probe.state === 'unverifiable' && !isHeartbeatStale(existing.owner)) {
+      throw new Error(`Tunnel lock owner liveness is unverifiable: ${probe.reason}`);
+    }
     if (probe.state === 'live' && probe.processStartedAt === existing.owner.processStartedAt) {
-      return { acquired: false, owner: existing.owner };
+      return { acquired: false, owner: publicOwner(existing.owner) };
     }
 
     await replaceVerifiedStaleOwner(lockPath, existing.owner, owner, options.hooks);
@@ -67,7 +73,14 @@ export async function acquireTunnelLock(options: TunnelLockOptions): Promise<Tun
   });
 }
 
+/** Backward-compatible owner view. Heartbeat metadata remains an internal lock detail. */
 export async function readTunnelLock(profileDirectory: string): Promise<TunnelLockOwner | null> {
+  const state = await readLockState(tunnelLockPath(profileDirectory));
+  return state.state === 'valid' ? publicOwner(state.owner) : null;
+}
+
+/** Full owner record for heartbeat diagnostics and focused verification. */
+export async function readTunnelLockHeartbeat(profileDirectory: string): Promise<TunnelLockOwner | null> {
   const state = await readLockState(tunnelLockPath(profileDirectory));
   return state.state === 'valid' ? state.owner : null;
 }
@@ -124,10 +137,28 @@ async function prepareOwnerRecord(lockPath: string, owner: TunnelLockOwner): Pro
 }
 
 function acquiredClaim(lockPath: string, owner: TunnelLockOwner, hooks: TunnelLockOptions['hooks']): TunnelLockAcquisition {
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
+    void refreshTunnelLockHeartbeat(path.dirname(lockPath), owner).then((stillOwner) => {
+      if (!stillOwner && heartbeatTimer !== null) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    }).catch(() => {
+      // A transient filesystem/mutex failure is retried on the next heartbeat.
+    });
+  }, HEARTBEAT_INTERVAL_MS);
+  heartbeatTimer.unref?.();
+
   return {
     acquired: true,
-    owner,
-    release: async (): Promise<boolean> => withTunnelLockCriticalSection(path.dirname(lockPath), () => releaseTunnelLock(lockPath, owner, hooks)),
+    owner: publicOwner(owner),
+    release: async (): Promise<boolean> => {
+      if (heartbeatTimer !== null) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+      return withTunnelLockCriticalSection(path.dirname(lockPath), () => releaseTunnelLock(lockPath, owner, hooks));
+    },
   };
 }
 
@@ -176,9 +207,17 @@ function parseOwner(raw: string): TunnelLockOwner | null {
     const value: unknown = JSON.parse(raw);
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
-    if (record.version !== LOCK_VERSION || !Number.isInteger(record.pid) || typeof record.processStartedAt !== 'string' || typeof record.acquiredAt !== 'string') return null;
+    if (!Number.isInteger(record.pid) || typeof record.processStartedAt !== 'string' || typeof record.acquiredAt !== 'string') return null;
+    const heartbeat = record.lastHeartbeatAt;
+    if (record.version === LOCK_VERSION && (typeof heartbeat !== 'string' || !isUtcMillisecondTimestamp(heartbeat))) return null;
+    if (record.version !== LOCK_VERSION && record.version !== LEGACY_LOCK_VERSION) return null;
     if ((record.pid as number) <= 0 || (record.pid as number) > 2_147_483_647 || !isUtcMillisecondTimestamp(record.processStartedAt) || !isUtcMillisecondTimestamp(record.acquiredAt)) return null;
-    return { pid: record.pid as number, processStartedAt: record.processStartedAt, acquiredAt: record.acquiredAt };
+    return {
+      pid: record.pid as number,
+      processStartedAt: record.processStartedAt,
+      acquiredAt: record.acquiredAt,
+      ...(typeof heartbeat === 'string' ? { lastHeartbeatAt: heartbeat } : {}),
+    };
   } catch {
     return null;
   }
@@ -189,7 +228,8 @@ function isValidOwner(owner: TunnelLockOwner): boolean {
     && owner.pid > 0
     && owner.pid <= 2_147_483_647
     && isUtcMillisecondTimestamp(owner.processStartedAt)
-    && isUtcMillisecondTimestamp(owner.acquiredAt);
+    && isUtcMillisecondTimestamp(owner.acquiredAt)
+    && (owner.lastHeartbeatAt === undefined || isUtcMillisecondTimestamp(owner.lastHeartbeatAt));
 }
 
 function isUtcMillisecondTimestamp(value: string): boolean {
@@ -199,7 +239,63 @@ function isUtcMillisecondTimestamp(value: string): boolean {
 }
 
 function serializeOwner(owner: TunnelLockOwner): string {
-  return JSON.stringify({ version: LOCK_VERSION, pid: owner.pid, processStartedAt: owner.processStartedAt, acquiredAt: owner.acquiredAt });
+  return JSON.stringify({
+    version: LOCK_VERSION,
+    pid: owner.pid,
+    processStartedAt: owner.processStartedAt,
+    acquiredAt: owner.acquiredAt,
+    lastHeartbeatAt: owner.lastHeartbeatAt ?? new Date().toISOString(),
+  });
+}
+
+export function isHeartbeatStale(
+  owner: TunnelLockOwner,
+  staleAfterMs = HEARTBEAT_STALE_MS,
+  now = Date.now(),
+): boolean {
+  if (owner.lastHeartbeatAt === undefined) return false;
+  const heartbeat = new Date(owner.lastHeartbeatAt).getTime();
+  return Number.isFinite(heartbeat) && now - heartbeat > staleAfterMs;
+}
+
+export async function refreshTunnelLockHeartbeat(
+  profileDirectory: string,
+  owner: TunnelLockOwner,
+): Promise<boolean> {
+  const lockPath = tunnelLockPath(profileDirectory);
+  return withTunnelLockCriticalSection(profileDirectory, async () => {
+    const current = await readLockState(lockPath);
+    if (current.state !== 'valid' || !sameOwner(current.owner, owner)) return false;
+
+    const refreshed: TunnelLockOwner = { ...owner, lastHeartbeatAt: new Date().toISOString() };
+    const publishPath = await prepareOwnerRecord(lockPath, refreshed);
+    const quarantinePath = `${lockPath}.heartbeat.${owner.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`;
+    try {
+      await rename(lockPath, quarantinePath);
+      const moved = parseOwner(await readFile(quarantinePath, 'utf8'));
+      if (!sameOwner(moved, owner)) {
+        await restoreQuarantinedRecord(lockPath, quarantinePath);
+        await rm(publishPath, { force: true }).catch(() => undefined);
+        return false;
+      }
+      await link(publishPath, lockPath);
+    } catch (error: unknown) {
+      await rm(publishPath, { force: true }).catch(() => undefined);
+      await restoreQuarantinedRecord(lockPath, quarantinePath);
+      throw error;
+    }
+    await rm(publishPath, { force: true }).catch(() => undefined);
+    await rm(quarantinePath, { force: true }).catch(() => undefined);
+    return true;
+  });
+}
+
+function publicOwner(owner: TunnelLockOwner): TunnelLockOwner {
+  return {
+    pid: owner.pid,
+    processStartedAt: owner.processStartedAt,
+    acquiredAt: owner.acquiredAt,
+  };
 }
 
 function sameOwner(left: TunnelLockOwner | null, right: TunnelLockOwner): boolean {
