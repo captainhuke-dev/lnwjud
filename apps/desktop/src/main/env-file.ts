@@ -65,7 +65,7 @@ function stripInlineComment(value: string): string {
   let quote: '"' | "'" | null = null;
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index];
-    if ((character === '"' || character === "'") && !isEscapedQuote(value, index)) {
+    if (character === '"' || character === "'") {
       quote = quote === character ? null : quote === null ? character : quote;
       continue;
     }
@@ -74,14 +74,6 @@ function stripInlineComment(value: string): string {
     }
   }
   return value;
-}
-
-function isEscapedQuote(value: string, index: number): boolean {
-  let backslashes = 0;
-  for (let cursor = index - 1; cursor >= 0 && value[cursor] === '\\'; cursor -= 1) {
-    backslashes += 1;
-  }
-  return backslashes % 2 === 1;
 }
 
 function dedupe(values: readonly string[]): readonly string[] {
