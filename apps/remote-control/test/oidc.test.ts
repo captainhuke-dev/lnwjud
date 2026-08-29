@@ -8,6 +8,7 @@ import {
 
 class FakeProvider implements OidcProviderAdapter {
   public claims: OidcClaims | undefined;
+  public exchangeCount = 0;
   public lastInput: {
     readonly code: string;
     readonly codeVerifier: string;
@@ -19,6 +20,7 @@ class FakeProvider implements OidcProviderAdapter {
     readonly codeVerifier: string;
     readonly redirectUri: string;
   }): Promise<OidcClaims> {
+    this.exchangeCount += 1;
     this.lastInput = input;
     if (this.claims === undefined) {
       throw new Error('TEST_PROVIDER_CLAIMS_MISSING');
@@ -35,6 +37,25 @@ const config = {
 } as const;
 
 const now = new Date('2026-08-29T11:20:00.000Z');
+
+function startFlow(claimOverrides: Partial<OidcClaims> = {}): {
+  readonly boundary: OidcSessionBoundary;
+  readonly provider: FakeProvider;
+  readonly started: ReturnType<OidcSessionBoundary['beginAuthorization']>;
+} {
+  const provider = new FakeProvider();
+  const boundary = new OidcSessionBoundary(config, provider);
+  const started = boundary.beginAuthorization(now);
+  provider.claims = {
+    issuer: config.issuer,
+    audience: config.clientId,
+    subject: 'operator-1',
+    expiresAt: Math.floor((now.getTime() + 5 * 60 * 1_000) / 1_000),
+    nonce: started.nonce,
+    ...claimOverrides,
+  };
+  return { boundary, provider, started };
+}
 
 describe('remote-control OIDC boundary', () => {
   it('computes RFC 7636 S256 from SHA-256 bytes using base64url without padding', () => {
@@ -57,16 +78,7 @@ describe('remote-control OIDC boundary', () => {
   });
 
   it('exchanges a valid callback with the stored verifier and returns a bounded secure browser session', async () => {
-    const provider = new FakeProvider();
-    const boundary = new OidcSessionBoundary(config, provider);
-    const started = boundary.beginAuthorization(now);
-    provider.claims = {
-      issuer: config.issuer,
-      audience: config.clientId,
-      subject: 'operator-1',
-      expiresAt: Math.floor((now.getTime() + 5 * 60 * 1_000) / 1_000),
-      nonce: started.nonce,
-    };
+    const { boundary, provider, started } = startFlow();
 
     const session = await boundary.completeAuthorization(
       { state: started.state, code: 'authorization-code' },
@@ -89,5 +101,78 @@ describe('remote-control OIDC boundary', () => {
       sameSite: 'Lax',
       maxAgeSeconds: 1800,
     });
+  });
+
+  it('rejects provider claims from the wrong issuer', async () => {
+    const { boundary, started } = startFlow({
+      issuer: 'https://attacker.example.test',
+    });
+
+    await expect(boundary.completeAuthorization(
+      { state: started.state, code: 'authorization-code' },
+      now,
+    )).rejects.toThrow();
+  });
+
+  it('rejects provider claims whose audience does not contain the configured client id', async () => {
+    const { boundary, started } = startFlow({ audience: ['other-client', 'another-client'] });
+
+    await expect(boundary.completeAuthorization(
+      { state: started.state, code: 'authorization-code' },
+      now,
+    )).rejects.toThrow();
+  });
+
+  it('accepts an audience array when it contains the configured client id', async () => {
+    const { boundary, started } = startFlow({ audience: ['other-client', config.clientId] });
+
+    await expect(boundary.completeAuthorization(
+      { state: started.state, code: 'authorization-code' },
+      now,
+    )).resolves.toMatchObject({ subject: 'operator-1' });
+  });
+
+  it('rejects expired provider claims', async () => {
+    const { boundary, started } = startFlow({
+      expiresAt: Math.floor(now.getTime() / 1_000),
+    });
+
+    await expect(boundary.completeAuthorization(
+      { state: started.state, code: 'authorization-code' },
+      now,
+    )).rejects.toThrow();
+  });
+
+  it('rejects a nonce mismatch', async () => {
+    const { boundary, started } = startFlow({ nonce: 'wrong-nonce' });
+
+    await expect(boundary.completeAuthorization(
+      { state: started.state, code: 'authorization-code' },
+      now,
+    )).rejects.toThrow();
+  });
+
+  it('consumes state after one successful callback and never exchanges a replay', async () => {
+    const { boundary, provider, started } = startFlow();
+
+    await boundary.completeAuthorization(
+      { state: started.state, code: 'authorization-code' },
+      now,
+    );
+    await expect(boundary.completeAuthorization(
+      { state: started.state, code: 'replayed-code' },
+      now,
+    )).rejects.toThrow();
+    expect(provider.exchangeCount).toBe(1);
+  });
+
+  it('rejects a pending authorization older than ten minutes before provider exchange', async () => {
+    const { boundary, provider, started } = startFlow();
+
+    await expect(boundary.completeAuthorization(
+      { state: started.state, code: 'authorization-code' },
+      new Date(now.getTime() + 10 * 60 * 1_000 + 1),
+    )).rejects.toThrow();
+    expect(provider.exchangeCount).toBe(0);
   });
 });
