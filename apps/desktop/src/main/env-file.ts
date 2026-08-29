@@ -41,6 +41,7 @@ export function defaultEnvironmentFileCandidates(
       ? []
       : [path.join(path.dirname(resourcesPath), '.env'), path.join(resourcesPath, '.env')]),
     path.join(cwd, '.env'),
+    path.resolve(moduleDirectory, '..', '..', '..', '..', '.env'),
     path.resolve(moduleDirectory, '..', '..', '..', '.env'),
     path.resolve(moduleDirectory, '..', '..', '.env'),
   ]);
