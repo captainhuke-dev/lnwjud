@@ -55,20 +55,23 @@ describe('remote-control server command journal', () => {
   it('persists a committed result across database reopen', async () => {
     const filename = await createDatabasePath();
     const db = new RemoteControlDatabase(filename);
-    const journal = new CommandJournal(db);
-    journal.claim({
-      commandId: 'command-2',
-      deviceId: 'device-1',
-      action: 'tunnel.status',
-      createdAt: '2026-08-29T11:01:00.000Z',
-    });
-    journal.markAccepted('command-2', new Date('2026-08-29T11:01:01.000Z'));
-    journal.commitResult(
-      'command-2',
-      { status: 'success', summary: 'Tunnel is healthy' },
-      new Date('2026-08-29T11:01:02.000Z'),
-    );
-    db.close();
+    try {
+      const journal = new CommandJournal(db);
+      journal.claim({
+        commandId: 'command-2',
+        deviceId: 'device-1',
+        action: 'tunnel.status',
+        createdAt: '2026-08-29T11:01:00.000Z',
+      });
+      journal.markAccepted('command-2', new Date('2026-08-29T11:01:01.000Z'));
+      journal.commitResult(
+        'command-2',
+        { status: 'success', summary: 'Tunnel is healthy' },
+        new Date('2026-08-29T11:01:02.000Z'),
+      );
+    } finally {
+      db.close();
+    }
 
     const reopened = new RemoteControlDatabase(filename);
     try {
