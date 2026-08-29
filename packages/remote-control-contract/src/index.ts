@@ -28,6 +28,46 @@ export interface RemoteCommandV1 {
   readonly parameters: Readonly<Record<string, unknown>>;
 }
 
+export type MachineHealthState = 'reachable' | 'unreachable' | 'unknown';
+export type SupervisorHealthState = 'online' | 'offline' | 'unknown';
+export type LocalHealthState = 'healthy' | 'unhealthy' | 'stopped' | 'unknown';
+export type TunnelHealthState = 'connected' | 'disconnected' | 'stopped' | 'unknown';
+
+export interface HealthSampleV1<State extends string> {
+  readonly state: State;
+  readonly observedAt: string;
+  readonly evidenceClass: string;
+}
+
+export interface HealthSnapshotV1 {
+  readonly machine: HealthSampleV1<MachineHealthState>;
+  readonly supervisor: HealthSampleV1<SupervisorHealthState>;
+  readonly desktop: HealthSampleV1<LocalHealthState>;
+  readonly mcp: HealthSampleV1<LocalHealthState>;
+  readonly tunnel: HealthSampleV1<TunnelHealthState>;
+}
+
+export interface DeviceHelloV1 {
+  readonly type: 'hello';
+  readonly protocolVersion: 1;
+  readonly deviceId: string;
+}
+
+export interface DeviceWelcomeV1 {
+  readonly type: 'welcome';
+  readonly protocolVersion: 1;
+  readonly serverTime: string;
+}
+
+export interface DeviceHeartbeatV1 {
+  readonly type: 'heartbeat';
+  readonly protocolVersion: 1;
+  readonly deviceId: string;
+  readonly health: HealthSnapshotV1;
+}
+
+export type DevicePresenceMessageV1 = DeviceHelloV1 | DeviceWelcomeV1 | DeviceHeartbeatV1;
+
 const REMOTE_COMMAND_KEYS = new Set([
   'protocolVersion',
   'commandId',
@@ -91,6 +131,11 @@ export function parseRemoteCommandV1(value: unknown): RemoteCommandV1 {
     expiresAt,
     parameters: value.parameters,
   };
+}
+
+export function parseDevicePresenceMessageV1(value: unknown): DevicePresenceMessageV1 {
+  void value;
+  throw new Error('REMOTE_CONTROL_PRESENCE_NOT_IMPLEMENTED');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
