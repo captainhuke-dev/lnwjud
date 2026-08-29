@@ -28,14 +28,30 @@ function Test-LnwjudTunnelLockTimestamp {
   return $parsed.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture) -ceq $Value
 }
 
+function Test-LnwjudTunnelLockHeartbeatStale {
+  param(
+    [Parameter(Mandatory = $true)]$Record,
+    [long]$StaleAfterMilliseconds = 90000,
+    [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow
+  )
+
+  if ($null -eq $Record -or -not (Test-LnwjudTunnelLockTimestamp -Value $Record.lastHeartbeatAt)) { return $false }
+  $heartbeat = [DateTimeOffset]::MinValue
+  $styles = [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+  if (-not [DateTimeOffset]::TryParseExact([string]$Record.lastHeartbeatAt, "yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$heartbeat)) { return $false }
+  return (($Now.ToUniversalTime() - $heartbeat.ToUniversalTime()).TotalMilliseconds -gt $StaleAfterMilliseconds)
+}
+
 function Test-LnwjudTunnelLockRecord {
   param([Parameter(Mandatory = $true)]$Record)
 
-  return $null -ne $Record `
-    -and (Test-LnwjudTunnelLockInteger -Value $Record.version -Minimum 1 -Maximum 1) `
-    -and (Test-LnwjudTunnelLockInteger -Value $Record.pid -Minimum 1 -Maximum 2147483647) `
-    -and (Test-LnwjudTunnelLockTimestamp -Value $Record.processStartedAt) `
-    -and (Test-LnwjudTunnelLockTimestamp -Value $Record.acquiredAt)
+  if ($null -eq $Record) { return $false }
+  if (-not (Test-LnwjudTunnelLockInteger -Value $Record.version -Minimum 1 -Maximum 2)) { return $false }
+  if (-not (Test-LnwjudTunnelLockInteger -Value $Record.pid -Minimum 1 -Maximum 2147483647)) { return $false }
+  if (-not (Test-LnwjudTunnelLockTimestamp -Value $Record.processStartedAt)) { return $false }
+  if (-not (Test-LnwjudTunnelLockTimestamp -Value $Record.acquiredAt)) { return $false }
+  if ([long]$Record.version -eq 2 -and -not (Test-LnwjudTunnelLockTimestamp -Value $Record.lastHeartbeatAt)) { return $false }
+  return $true
 }
 
 function Read-LnwjudTunnelLockRecord {
@@ -143,6 +159,9 @@ function Enter-LnwjudTunnelLock {
 
   New-Item -ItemType Directory -Path $ProfileDir -Force | Out-Null
   $lockPath = Join-Path $ProfileDir 'lnwjud.tunnel.lock'
+  # The PowerShell launcher blocks in tunnel-client while it owns the lock and
+  # does not run a heartbeat lifecycle. Keep its writer on schema v1; schema v2
+  # is reserved for heartbeat-capable writers such as the Desktop TypeScript lock.
   $owner = [pscustomobject][ordered]@{
     version = 1
     pid = $OwnerPid
@@ -162,7 +181,7 @@ function Enter-LnwjudTunnelLock {
     if ($null -eq $existing) { throw "Tunnel lock has invalid owner metadata: $lockPath" }
     try { $probe = & $ProcessStartProvider ([int]$existing.pid) } catch { $probe = [pscustomobject]@{ state = 'unverifiable'; reason = 'process_probe_failed' } }
     if ($null -eq $probe -or $probe.state -notin @('live', 'gone', 'unverifiable')) { $probe = [pscustomobject]@{ state = 'unverifiable'; reason = 'invalid_probe_result' } }
-    if ($probe.state -eq 'unverifiable') {
+    if ($probe.state -eq 'unverifiable' -and -not (Test-LnwjudTunnelLockHeartbeatStale -Record $existing)) {
       $reason = if ([string]::IsNullOrWhiteSpace([string]$probe.reason)) { 'process_probe_failed' } else { [string]$probe.reason }
       throw "Tunnel lock owner liveness is unverifiable: $reason"
     }
