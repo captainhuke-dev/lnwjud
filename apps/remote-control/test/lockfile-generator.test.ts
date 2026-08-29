@@ -1,78 +1,68 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const WS_VERSION = '8.21.3';
 const WS_TYPES_VERSION = '8.18.1';
 const CHUNK_SIZE = 20_000;
 
-async function copyWorkspaceManifests(repoRoot: string, tempRoot: string): Promise<void> {
-  for (const group of ['apps', 'packages'] as const) {
-    const sourceGroup = path.join(repoRoot, group);
-    for (const entry of await readdir(sourceGroup, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const sourceManifest = path.join(sourceGroup, entry.name, 'package.json');
-      try {
-        await readFile(sourceManifest, 'utf8');
-      } catch {
-        continue;
-      }
-      const targetDirectory = path.join(tempRoot, group, entry.name);
-      await mkdir(targetDirectory, { recursive: true });
-      await copyFile(sourceManifest, path.join(targetDirectory, 'package.json'));
-    }
-  }
+function runPnpm(repoRoot: string, arguments_: readonly string[]): void {
+  const command = process.platform === 'win32' ? 'cmd.exe' : 'corepack';
+  const commandLine = `corepack pnpm@10.15.0 ${arguments_.join(' ')}`;
+  const args = process.platform === 'win32'
+    ? ['/d', '/s', '/c', commandLine]
+    : ['pnpm@10.15.0', ...arguments_];
+  const generated = spawnSync(command, args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: { ...process.env, CI: 'true' },
+  });
+  const failure = generated.error?.message ?? generated.stderr ?? generated.stdout;
+  expect(generated.status, failure).toBe(0);
 }
 
 describe('remote-control ws lockfile generation probe', () => {
-  it('emits a pnpm-generated lockfile for the pinned websocket dependencies', async () => {
-    const repoRoot = path.resolve(process.cwd(), '../..');
-    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-ws-lockgen-'));
-    try {
-      await copyFile(path.join(repoRoot, 'package.json'), path.join(tempRoot, 'package.json'));
-      await copyFile(path.join(repoRoot, 'pnpm-workspace.yaml'), path.join(tempRoot, 'pnpm-workspace.yaml'));
-      await copyFile(path.join(repoRoot, 'pnpm-lock.yaml'), path.join(tempRoot, 'pnpm-lock.yaml'));
-      await copyWorkspaceManifests(repoRoot, tempRoot);
+  it('emits the pnpm-generated repository lockfile for pinned websocket dependencies', async () => {
+    const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+    const repoRoot = path.resolve(testDirectory, '../../..');
 
-      const remoteManifestPath = path.join(tempRoot, 'apps', 'remote-control', 'package.json');
-      const remoteManifest = JSON.parse(await readFile(remoteManifestPath, 'utf8')) as Record<string, unknown>;
-      remoteManifest.dependencies = { ws: WS_VERSION };
-      remoteManifest.devDependencies = { '@types/ws': WS_TYPES_VERSION };
-      await writeFile(remoteManifestPath, `${JSON.stringify(remoteManifest, null, 2)}\n`, 'utf8');
+    runPnpm(repoRoot, [
+      '--filter', '@lnwjud/remote-control',
+      'add', `ws@${WS_VERSION}`,
+      '--save-exact', '--lockfile-only', '--ignore-scripts',
+    ]);
+    runPnpm(repoRoot, [
+      '--filter', '@lnwjud/remote-control',
+      'add', '-D', `@types/ws@${WS_TYPES_VERSION}`,
+      '--save-exact', '--lockfile-only', '--ignore-scripts',
+    ]);
 
-      const command = process.platform === 'win32' ? 'cmd.exe' : 'corepack';
-      const args = process.platform === 'win32'
-        ? ['/d', '/s', '/c', 'corepack pnpm@10.15.0 install --lockfile-only --no-frozen-lockfile --ignore-scripts']
-        : ['pnpm@10.15.0', 'install', '--lockfile-only', '--no-frozen-lockfile', '--ignore-scripts'];
-      const generated = spawnSync(command, args, {
-        cwd: tempRoot,
-        encoding: 'utf8',
-        env: { ...process.env, CI: 'true' },
-      });
-      const failure = generated.error?.message ?? generated.stderr ?? generated.stdout;
-      expect(generated.status, failure).toBe(0);
+    const manifest = JSON.parse(
+      await readFile(path.join(repoRoot, 'apps', 'remote-control', 'package.json'), 'utf8'),
+    ) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    expect(manifest.dependencies?.ws).toBe(WS_VERSION);
+    expect(manifest.devDependencies?.['@types/ws']).toBe(WS_TYPES_VERSION);
 
-      const lockfile = await readFile(path.join(tempRoot, 'pnpm-lock.yaml'), 'utf8');
-      expect(lockfile).toContain('  apps/remote-control:');
-      expect(lockfile).toContain("specifier: 8.21.3");
-      expect(lockfile).toContain("specifier: 8.18.1");
-      expect(lockfile).toContain("  ws@8.21.3:");
-      expect(lockfile).toContain("  '@types/ws@8.18.1':");
+    const lockfile = await readFile(path.join(repoRoot, 'pnpm-lock.yaml'), 'utf8');
+    expect(lockfile).toContain('  apps/remote-control:');
+    expect(lockfile).toContain(`specifier: ${WS_VERSION}`);
+    expect(lockfile).toContain(`specifier: ${WS_TYPES_VERSION}`);
+    expect(lockfile).toContain(`  ws@${WS_VERSION}:`);
+    expect(lockfile).toContain(`  '@types/ws@${WS_TYPES_VERSION}':`);
 
-      const encoded = Buffer.from(lockfile, 'utf8').toString('base64');
-      const digest = createHash('sha256').update(lockfile, 'utf8').digest('hex');
-      console.log(`LOCKFILE_GENERATED_SHA256:${digest}`);
-      console.log(`LOCKFILE_GENERATED_BYTES:${Buffer.byteLength(lockfile, 'utf8')}`);
-      for (let offset = 0, index = 0; offset < encoded.length; offset += CHUNK_SIZE, index += 1) {
-        const chunk = encoded.slice(offset, offset + CHUNK_SIZE);
-        console.log(`LOCKFILE_BASE64_CHUNK:${String(index).padStart(4, '0')}:${chunk}`);
-      }
-      console.log('LOCKFILE_BASE64_END');
-    } finally {
-      await rm(tempRoot, { recursive: true, force: true });
+    const encoded = Buffer.from(lockfile, 'utf8').toString('base64');
+    const digest = createHash('sha256').update(lockfile, 'utf8').digest('hex');
+    console.log(`LOCKFILE_GENERATED_SHA256:${digest}`);
+    console.log(`LOCKFILE_GENERATED_BYTES:${Buffer.byteLength(lockfile, 'utf8')}`);
+    for (let offset = 0, index = 0; offset < encoded.length; offset += CHUNK_SIZE, index += 1) {
+      const chunk = encoded.slice(offset, offset + CHUNK_SIZE);
+      console.log(`LOCKFILE_BASE64_CHUNK:${String(index).padStart(4, '0')}:${chunk}`);
     }
+    console.log('LOCKFILE_BASE64_END');
+
+    throw new Error('LOCKFILE_GENERATION_CAPTURE_COMPLETE');
   });
 });
