@@ -80,6 +80,17 @@ const REMOTE_COMMAND_KEYS = new Set([
   'parameters',
 ]);
 
+const HELLO_KEYS = new Set(['type', 'protocolVersion', 'deviceId']);
+const WELCOME_KEYS = new Set(['type', 'protocolVersion', 'serverTime']);
+const HEARTBEAT_KEYS = new Set(['type', 'protocolVersion', 'deviceId', 'health']);
+const HEALTH_KEYS = new Set(['machine', 'supervisor', 'desktop', 'mcp', 'tunnel']);
+const HEALTH_SAMPLE_KEYS = new Set(['state', 'observedAt', 'evidenceClass']);
+
+const MACHINE_HEALTH_STATES = new Set<MachineHealthState>(['reachable', 'unreachable', 'unknown']);
+const SUPERVISOR_HEALTH_STATES = new Set<SupervisorHealthState>(['online', 'offline', 'unknown']);
+const LOCAL_HEALTH_STATES = new Set<LocalHealthState>(['healthy', 'unhealthy', 'stopped', 'unknown']);
+const TUNNEL_HEALTH_STATES = new Set<TunnelHealthState>(['connected', 'disconnected', 'stopped', 'unknown']);
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function parseRemoteCommandV1(value: unknown): RemoteCommandV1 {
@@ -134,8 +145,81 @@ export function parseRemoteCommandV1(value: unknown): RemoteCommandV1 {
 }
 
 export function parseDevicePresenceMessageV1(value: unknown): DevicePresenceMessageV1 {
-  void value;
-  throw new Error('REMOTE_CONTROL_PRESENCE_NOT_IMPLEMENTED');
+  if (!isRecord(value)) throw new Error('Device presence message must be an object');
+  if (value.protocolVersion !== REMOTE_CONTROL_PROTOCOL_VERSION) {
+    throw new Error('Device presence protocol version is not supported');
+  }
+
+  if (value.type === 'hello') {
+    requireExactKeys(value, HELLO_KEYS, 'device hello');
+    if (!isNonEmptyString(value.deviceId)) throw new Error('Device hello id must be non-empty');
+    return {
+      type: 'hello',
+      protocolVersion: REMOTE_CONTROL_PROTOCOL_VERSION,
+      deviceId: value.deviceId,
+    };
+  }
+
+  if (value.type === 'welcome') {
+    requireExactKeys(value, WELCOME_KEYS, 'device welcome');
+    return {
+      type: 'welcome',
+      protocolVersion: REMOTE_CONTROL_PROTOCOL_VERSION,
+      serverTime: requirePresenceTimestamp(value.serverTime, 'serverTime'),
+    };
+  }
+
+  if (value.type === 'heartbeat') {
+    requireExactKeys(value, HEARTBEAT_KEYS, 'device heartbeat');
+    if (!isNonEmptyString(value.deviceId)) throw new Error('Device heartbeat id must be non-empty');
+    return {
+      type: 'heartbeat',
+      protocolVersion: REMOTE_CONTROL_PROTOCOL_VERSION,
+      deviceId: value.deviceId,
+      health: parseHealthSnapshotV1(value.health),
+    };
+  }
+
+  throw new Error('Device presence message type is not supported');
+}
+
+function parseHealthSnapshotV1(value: unknown): HealthSnapshotV1 {
+  if (!isRecord(value)) throw new Error('Health snapshot must be an object');
+  requireExactKeys(value, HEALTH_KEYS, 'health snapshot');
+  return {
+    machine: parseHealthSample(value.machine, MACHINE_HEALTH_STATES, 'machine'),
+    supervisor: parseHealthSample(value.supervisor, SUPERVISOR_HEALTH_STATES, 'supervisor'),
+    desktop: parseHealthSample(value.desktop, LOCAL_HEALTH_STATES, 'desktop'),
+    mcp: parseHealthSample(value.mcp, LOCAL_HEALTH_STATES, 'mcp'),
+    tunnel: parseHealthSample(value.tunnel, TUNNEL_HEALTH_STATES, 'tunnel'),
+  };
+}
+
+function parseHealthSample<State extends string>(
+  value: unknown,
+  allowedStates: ReadonlySet<State>,
+  component: string,
+): HealthSampleV1<State> {
+  if (!isRecord(value)) throw new Error(`Health sample ${component} must be an object`);
+  requireExactKeys(value, HEALTH_SAMPLE_KEYS, `health sample ${component}`);
+  if (typeof value.state !== 'string' || !allowedStates.has(value.state as State)) {
+    throw new Error(`Health sample ${component} state is not supported`);
+  }
+  if (!isNonEmptyString(value.evidenceClass)) {
+    throw new Error(`Health sample ${component} evidence class must be non-empty`);
+  }
+  return {
+    state: value.state as State,
+    observedAt: requirePresenceTimestamp(value.observedAt, `${component}.observedAt`),
+    evidenceClass: value.evidenceClass,
+  };
+}
+
+function requireExactKeys(value: Readonly<Record<string, unknown>>, allowedKeys: ReadonlySet<string>, label: string): void {
+  const keys = Object.keys(value);
+  if (keys.length !== allowedKeys.size || keys.some((key) => !allowedKeys.has(key))) {
+    throw new Error(`${label} contains unknown or missing fields`);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -153,6 +237,13 @@ function isRemoteAction(value: string): value is RemoteAction {
 function requireTimestamp(value: unknown, field: string): string {
   if (typeof value !== 'string') throw new Error(`Remote command ${field} must be a timestamp`);
   if (!Number.isFinite(Date.parse(value))) throw new Error(`Remote command ${field} must be a timestamp`);
+  return value;
+}
+
+function requirePresenceTimestamp(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+    throw new Error(`Device presence ${field} must be a timestamp`);
+  }
   return value;
 }
 
