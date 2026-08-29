@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { markStartupDoctorPassed, STARTUP_DOCTOR_STORAGE_KEY, startupDoctorCorePassed, startupDoctorRequired } from '../src/renderer/features/onboarding/startup-doctor-state.js';
 
@@ -37,6 +38,12 @@ describe('startup Doctor state', () => {
       ],
     })).toBe(false);
     expect(startupDoctorCorePassed({ checks: [] })).toBe(false);
+  });
+
+  it('does not gate sidebar navigation on startup Doctor status', async () => {
+    const appSource = await readFile(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+    expect(appSource).not.toContain('startupDoctorBlocksNavigation');
+    expect(appSource).not.toContain("nextScreen !== 'doctor'");
   });
 
   it('requires Doctor on a clean profile and after an app version changes', () => {

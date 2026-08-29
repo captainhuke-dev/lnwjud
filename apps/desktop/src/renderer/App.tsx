@@ -553,10 +553,6 @@ export function App(): ReactElement {
       screen={screen}
       onNavigate={(nextScreen) => {
         setError(null);
-        if (!startupDoctorReady && doctor?.exitCode === 1 && nextScreen !== 'doctor') {
-          setScreen('doctor');
-          return;
-        }
         setScreen(nextScreen);
       }}
       onLocaleChange={(next) => { void changeLocale(next); }}
