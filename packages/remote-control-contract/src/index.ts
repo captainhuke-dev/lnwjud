@@ -67,6 +67,7 @@ export interface DeviceHeartbeatV1 {
 }
 
 export type DevicePresenceMessageV1 = DeviceHelloV1 | DeviceWelcomeV1 | DeviceHeartbeatV1;
+export type DeviceInboundMessageV1 = DeviceHelloV1 | DeviceHeartbeatV1;
 
 const REMOTE_COMMAND_KEYS = new Set([
   'protocolVersion',
@@ -181,6 +182,17 @@ export function parseDevicePresenceMessageV1(value: unknown): DevicePresenceMess
   }
 
   throw new Error('Device presence message type is not supported');
+}
+
+export function parseDeviceInboundMessageV1(value: unknown, expectedDeviceId: string): DeviceInboundMessageV1 {
+  const parsed = parseDevicePresenceMessageV1(value);
+  if (parsed.type === 'welcome') {
+    throw new Error('Device welcome message is server-only');
+  }
+  if (parsed.deviceId !== expectedDeviceId) {
+    throw new Error('Device message identity does not match the authenticated device');
+  }
+  return parsed;
 }
 
 function parseHealthSnapshotV1(value: unknown): HealthSnapshotV1 {
