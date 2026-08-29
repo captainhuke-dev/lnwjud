@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { configuredStdioCapabilityRoots } from './stdio-mcp-runtime.js';
+import { configuredStdioCapabilityRoots } from './stdio-capability-roots.js';
 
 describe('stdio capability root configuration', () => {
   it('includes extra environment roots without enabling unrestricted mode', () => {
