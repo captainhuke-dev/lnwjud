@@ -28,6 +28,7 @@ export interface RemoteCommandV1 {
   readonly parameters: Readonly<Record<string, unknown>>;
 }
 
-export function parseRemoteCommandV1(_value: unknown): RemoteCommandV1 {
+export function parseRemoteCommandV1(value: unknown): RemoteCommandV1 {
+  void value;
   throw new Error('REMOTE_CONTROL_NOT_IMPLEMENTED');
 }
