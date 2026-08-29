@@ -43,13 +43,17 @@ describe('remote-control ws lockfile generation probe', () => {
       remoteManifest.devDependencies = { '@types/ws': WS_TYPES_VERSION };
       await writeFile(remoteManifestPath, `${JSON.stringify(remoteManifest, null, 2)}\n`, 'utf8');
 
-      const corepack = process.platform === 'win32' ? 'corepack.cmd' : 'corepack';
-      const generated = spawnSync(
-        corepack,
-        ['pnpm@10.15.0', 'install', '--lockfile-only', '--no-frozen-lockfile', '--ignore-scripts'],
-        { cwd: tempRoot, encoding: 'utf8', env: { ...process.env, CI: 'true' } },
-      );
-      expect(generated.status, generated.stderr || generated.stdout).toBe(0);
+      const command = process.platform === 'win32' ? 'cmd.exe' : 'corepack';
+      const args = process.platform === 'win32'
+        ? ['/d', '/s', '/c', 'corepack pnpm@10.15.0 install --lockfile-only --no-frozen-lockfile --ignore-scripts']
+        : ['pnpm@10.15.0', 'install', '--lockfile-only', '--no-frozen-lockfile', '--ignore-scripts'];
+      const generated = spawnSync(command, args, {
+        cwd: tempRoot,
+        encoding: 'utf8',
+        env: { ...process.env, CI: 'true' },
+      });
+      const failure = generated.error?.message ?? generated.stderr ?? generated.stdout;
+      expect(generated.status, failure).toBe(0);
 
       const lockfile = await readFile(path.join(tempRoot, 'pnpm-lock.yaml'), 'utf8');
       expect(lockfile).toContain('  apps/remote-control:');
