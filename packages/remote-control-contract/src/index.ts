@@ -69,9 +69,9 @@ export function parseRemoteCommandV1(value: unknown): RemoteCommandV1 {
     throw new Error('Remote command action is not allowed');
   }
 
-  const createdAtMs = parseTimestamp(value.createdAt, 'createdAt');
-  const expiresAtMs = parseTimestamp(value.expiresAt, 'expiresAt');
-  if (expiresAtMs <= createdAtMs) {
+  const createdAt = requireTimestamp(value.createdAt, 'createdAt');
+  const expiresAt = requireTimestamp(value.expiresAt, 'expiresAt');
+  if (Date.parse(expiresAt) <= Date.parse(createdAt)) {
     throw new Error('Remote command expiry must be after creation');
   }
 
@@ -87,8 +87,8 @@ export function parseRemoteCommandV1(value: unknown): RemoteCommandV1 {
     action,
     actorId: value.actorId,
     deliverySequence: value.deliverySequence,
-    createdAt: value.createdAt,
-    expiresAt: value.expiresAt,
+    createdAt,
+    expiresAt,
     parameters: value.parameters,
   };
 }
@@ -105,11 +105,10 @@ function isRemoteAction(value: string): value is RemoteAction {
   return (REMOTE_ACTIONS as readonly string[]).includes(value);
 }
 
-function parseTimestamp(value: unknown, field: string): number {
+function requireTimestamp(value: unknown, field: string): string {
   if (typeof value !== 'string') throw new Error(`Remote command ${field} must be a timestamp`);
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) throw new Error(`Remote command ${field} must be a timestamp`);
-  return parsed;
+  if (!Number.isFinite(Date.parse(value))) throw new Error(`Remote command ${field} must be a timestamp`);
+  return value;
 }
 
 function validateParameters(action: RemoteAction, parameters: Readonly<Record<string, unknown>>): void {
