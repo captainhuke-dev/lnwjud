@@ -3,6 +3,7 @@
   "references": [
     { "path": "./apps/cli" },
     { "path": "./apps/desktop" },
+    { "path": "./apps/remote-control" },
     { "path": "./packages/domain" },
     { "path": "./packages/capabilities" },
     { "path": "./packages/extensions" },
@@ -19,6 +20,7 @@
     { "path": "./packages/application" },
     { "path": "./packages/mcp-server" },
     { "path": "./packages/ipc-contracts" },
+    { "path": "./packages/remote-control-contract" },
     { "path": "./packages/search" }
   ]
 }
