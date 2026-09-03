@@ -498,7 +498,7 @@ export class TunnelController {
       } catch (gracefulError: unknown) {
         const pid = child.pid;
         if (!Number.isInteger(pid) || (pid ?? 0) <= 0) throw gracefulError;
-        const inspect = this.options.inspectOwnedProcess ?? probeProcessStart;
+        const inspect = this.options.inspectOwnedProcess ?? probeTunnelProcessStart;
         if (this.ownedChildStartedAt === null) {
           const identityProbe = await inspect(pid as number);
           if (identityProbe.state === 'gone') {
@@ -616,7 +616,7 @@ export class TunnelController {
       return null;
     }
     try {
-      const probe = await (this.options.inspectLockProcess?.(owner.pid) ?? probeProcessStart(owner.pid));
+      const probe = await (this.options.inspectLockProcess?.(owner.pid) ?? probeTunnelProcessStart(owner.pid));
       this.foreignOwner = probe.state === 'live' && probe.processStartedAt === owner.processStartedAt ? owner : null;
     } catch {
       this.foreignOwner = null;
@@ -653,7 +653,7 @@ export class TunnelController {
     this.ownedChildStartedAt = null;
     if (Number.isInteger(child.pid) && (child.pid ?? 0) > 0) {
       const childPid = child.pid as number;
-      void (this.options.inspectOwnedProcess?.(childPid) ?? probeProcessStart(childPid)).then((probe) => {
+      void (this.options.inspectOwnedProcess?.(childPid) ?? probeTunnelProcessStart(childPid)).then((probe) => {
         if (this.child === child && probe.state === 'live') this.ownedChildStartedAt = probe.processStartedAt;
       }).catch(() => undefined);
     }
@@ -1079,18 +1079,27 @@ async function isLnwjudTunnelProcessRunning(): Promise<boolean> {
 }
 
 async function findLnwjudTunnelProcessPids(): Promise<readonly number[]> {
+  const powershellPath = process.env.SystemRoot !== undefined
+    ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    : 'powershell.exe';
   const result = await Promise.race([
-    execFileAsync('powershell.exe', [
+    execFileAsync(powershellPath, [
       '-NoProfile',
       '-NonInteractive',
       '-Command',
       "@(Get-CimInstance Win32_Process -Filter \"Name = 'tunnel-client.exe'\" -ErrorAction Stop | Where-Object { $_.CommandLine -match '(?i)(--profile\\s+lnwjud|lnwjud\\.yaml)' } | Select-Object -ExpandProperty ProcessId) -join ','",
-    ], { windowsHide: true, encoding: 'utf8', timeout: 3_000 }),
+    ], { windowsHide: true, encoding: 'utf8', timeout: 9_000 }),
     new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('tunnel process probe timed out')), 3_500);
+      setTimeout(() => reject(new Error('tunnel process probe timed out')), 10_000);
     }),
   ]);
   return result.stdout.trim().split(',').map((value) => Number(value.trim())).filter((pid) => Number.isInteger(pid) && pid > 0 && pid <= 2_147_483_647);
+}
+
+async function probeTunnelProcessStart(pid: number): Promise<ProcessProbeResult> {
+  // PowerShell process probes on this host can take ~2-3s; the shared 1750ms
+  // per-attempt default times out and reports the liveness as unverifiable.
+  return probeProcessStart(pid, { timeoutMs: 5_000, attempts: 2 });
 }
 
 export function waitForTunnelChildExit(child: Pick<ChildProcess, 'exitCode' | 'once' | 'removeListener'>, timeoutMs = 5_000): Promise<void> {
